@@ -50,7 +50,7 @@ export function createBot(token, steamApiKey) {
       const tag = gameName
         ? storage.truncateTag(gameName)
         : DEFAULT_TAG_OFFLINE;
-      await setMemberTag(ctx.telegram, chatId, userId, tag);
+      await setUserTag(ctx.telegram, chatId, userId, tag);
       await ctx.reply(`Steam ID привязан: ${steamId64}. Тег обновлён.`);
     } catch (err) {
       console.error('link error', err);
@@ -76,17 +76,66 @@ export function createBot(token, steamApiKey) {
     }
   });
 
+  bot.command('ping', async (ctx) => {
+    const mentions = (process.env.PING_MENTIONS || '').trim();
+    if (!mentions) {
+      await ctx.reply('Список для /ping не настроен (PING_MENTIONS в .env).');
+      return;
+    }
+    await ctx.reply(mentions);
+  });
+
   return bot;
 }
 
 /**
- * Set member tag via Bot API (requires can_manage_tags).
+ * Set tag for a user: custom title for admins/creator, member tag for regular members.
  * @param {import('telegraf').Telegram} telegram
  * @param {number} chatId
  * @param {number} userId
  * @param {string} tag - 0-16 chars, no emoji
  */
-export async function setMemberTag(telegram, chatId, userId, tag) {
+export async function setUserTag(telegram, chatId, userId, tag) {
+  const t = tag.slice(0, TAG_MAX_LENGTH).trim();
+  if (!telegram.callApi) return;
+  try {
+    const member = await telegram.callApi('getChatMember', {
+      chat_id: chatId,
+      user_id: userId,
+    });
+    const status = member?.status;
+    if (status === 'creator' || status === 'administrator') {
+      try {
+        await telegram.callApi('setChatAdministratorCustomTitle', {
+          chat_id: chatId,
+          user_id: userId,
+          custom_title: t || ' ',
+        });
+      } catch (err) {
+        console.warn(
+          `setChatAdministratorCustomTitle failed for ${userId} in ${chatId}:`,
+          err.response?.description ?? err.message
+        );
+      }
+      return;
+    }
+    await setMemberTag(telegram, chatId, userId, tag);
+  } catch (err) {
+    console.warn(
+      `setUserTag failed for ${userId} in ${chatId}:`,
+      err.response?.description ?? err.message
+    );
+  }
+}
+
+/**
+ * Set member tag via Bot API (requires can_manage_tags). Used for regular members only.
+ * @param {import('telegraf').Telegram} telegram
+ * @param {number} chatId
+ * @param {number} userId
+ * @param {string} tag - 0-16 chars, no emoji
+ */
+async function setMemberTag(telegram, chatId, userId, tag) {
   const t = tag.slice(0, TAG_MAX_LENGTH).trim();
   try {
     if (telegram.callApi) {

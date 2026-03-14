@@ -1,6 +1,6 @@
 import * as storage from './storage.js';
 import * as steam from './steam.js';
-import { setMemberTag } from './bot.js';
+import { setUserTag } from './bot.js';
 
 const DEFAULT_TAG_OFFLINE = 'Не в игре';
 
@@ -42,7 +42,7 @@ export function startScheduler(telegram, steamApiKey) {
       for (const u of records) {
         if (u.lastTag === tag) continue;
         try {
-          await setMemberTag(telegram, u.chatId, u.telegramUserId, tag);
+          await setUserTag(telegram, u.chatId, u.telegramUserId, tag);
           await storage.setLastTag(u.telegramUserId, u.chatId, tag);
         } catch (err) {
           console.warn(

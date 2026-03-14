@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { createBot, setMemberTag } from './bot.js';
+import { createBot } from './bot.js';
 import { startScheduler } from './scheduler.js';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
