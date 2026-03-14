@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { createServer } from 'http';
 import { createBot } from './bot.js';
 import { startScheduler } from './scheduler.js';
 
@@ -16,6 +17,15 @@ if (!steamApiKey) {
 
 const bot = createBot(token, steamApiKey);
 startScheduler(bot.telegram, steamApiKey);
+
+// Optional: listen on PORT for Render.com Web Service (health check)
+const port = process.env.PORT;
+if (port) {
+  createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Bot is running');
+  }).listen(port, () => console.log(`Listening on port ${port}`));
+}
 
 bot.launch().then(() => {
   console.log('Bot started');

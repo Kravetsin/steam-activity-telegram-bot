@@ -35,6 +35,11 @@ Development mode with auto-restart:
 npm run dev
 ```
 
+## Deploying (e.g. Render.com)
+
+- **Background Worker** (recommended): Create a "Background Worker" service. Start command: `npm start`. No port is required.
+- **Web Service**: If you use a "Web Service", the app binds to `PORT` when set and responds with "Bot is running" so Render's health check passes. Set all env vars in the Render dashboard.
+
 ## Setting up the bot in a group
 
 1. Add the bot to a supergroup.
