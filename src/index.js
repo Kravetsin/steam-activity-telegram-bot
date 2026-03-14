@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { createServer } from 'http';
+import mongoose from 'mongoose';
 import { createBot } from './bot.js';
 import { startScheduler } from './scheduler.js';
 
@@ -13,6 +14,16 @@ if (!token) {
 if (!steamApiKey) {
   console.error('STEAM_API_KEY is required');
   process.exit(1);
+}
+
+if (process.env.MONGODB_URI) {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI);
+    console.log('MongoDB connected');
+  } catch (err) {
+    console.error('MongoDB connection failed:', err.message);
+    process.exit(1);
+  }
 }
 
 const bot = createBot(token, steamApiKey);

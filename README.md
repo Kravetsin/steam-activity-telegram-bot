@@ -22,6 +22,7 @@ Fill in `.env`:
 - `TELEGRAM_CHAT_ID` — (optional) Chat ID if the bot only runs in one chat
 - `POLL_INTERVAL_MS` — (optional) Steam poll interval in ms, default 60000 (1 min)
 - `PING_MENTIONS` — (optional) Space-separated @usernames for the `/ping` command (e.g. `@user1 @user2`). Kept in `.env` only so the list is not committed to the repo.
+- `MONGODB_URI` — (optional) MongoDB connection string (e.g. [MongoDB Atlas](https://www.mongodb.com/atlas) or a DB on Render). If set, Steam link data is stored in MongoDB and survives restarts and redeploys. If not set, data is stored in `data/linked-users.json`.
 
 ## Running
 
@@ -39,6 +40,7 @@ npm run dev
 
 - **Background Worker** (recommended): Create a "Background Worker" service. Start command: `npm start`. No port is required.
 - **Web Service**: If you use a "Web Service", the app binds to `PORT` when set and responds with "Bot is running" so Render's health check passes. Set all env vars in the Render dashboard.
+- Set `MONGODB_URI` so that Steam link data persists across restarts and redeploys (otherwise the filesystem is ephemeral and `data/linked-users.json` is lost).
 
 ## Setting up the bot in a group
 
@@ -63,11 +65,13 @@ After linking, the bot periodically polls the Steam API and updates the member's
 
 ```
 src/
-  index.js   — Entry point, bot and scheduler startup
+  index.js   — Entry point, MongoDB connection, bot and scheduler startup
   bot.js     — /link, /unlink, /ping commands, tag setting
   steam.js   — Steam API requests (ResolveVanityURL, GetPlayerSummaries)
-  storage.js — Link storage (JSON in data/)
+  storage.js — Link storage (MongoDB when MONGODB_URI set, else JSON in data/)
+  models/
+    LinkedUser.js — Mongoose schema for linked users
   scheduler.js — Periodic Steam polling and tag updates
 ```
 
-Link data is stored in `data/linked-users.json`.
+Link data is stored in MongoDB when `MONGODB_URI` is set; otherwise in `data/linked-users.json`.
