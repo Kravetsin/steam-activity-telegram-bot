@@ -77,12 +77,42 @@ export function createBot(token, steamApiKey) {
   });
 
   bot.command('ping', async (ctx) => {
-    const mentions = (process.env.PING_MENTIONS || '').trim();
-    if (!mentions) {
-      await ctx.reply('Список для /ping не настроен (PING_MENTIONS в .env).');
+    const chatId = ctx.chat?.id;
+    if (!chatId) return;
+
+    if (ctx.chat.type !== 'supergroup' && ctx.chat.type !== 'group') {
+      await ctx.reply('Команда /ping доступна только в группах и супергруппах.');
       return;
     }
-    await ctx.reply(mentions);
+
+    try {
+      const linked = await storage.getByChatId(chatId);
+      if (!linked.length) {
+        await ctx.reply('В этом чате пока никто не привязал Steam. Используйте /link.');
+        return;
+      }
+      const mentions = await Promise.all(
+        linked.map(async (u) => {
+          let label = '·';
+          try {
+            const member = await ctx.telegram.getChatMember(chatId, u.telegramUserId);
+            const user = member?.user;
+            if (user) {
+              const name = [user.first_name, user.last_name].filter(Boolean).join(' ').trim();
+              label = name || (user.username ? `@${user.username}` : '·');
+            }
+          } catch (_) {
+            // user may have left the chat
+          }
+          const escaped = label.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          return `<a href="tg://user?id=${u.telegramUserId}">${escaped}</a>`;
+        })
+      );
+      await ctx.reply(`Общий сбор: ${mentions.join(' ')}`, { parse_mode: 'HTML' });
+    } catch (err) {
+      console.error('ping error', err);
+      await ctx.reply('Ошибка при выполнении /ping.');
+    }
   });
 
   return bot;

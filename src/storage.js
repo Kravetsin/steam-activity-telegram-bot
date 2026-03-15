@@ -125,6 +125,24 @@ export async function get(telegramUserId, chatId) {
 }
 
 /**
+ * @param {number} chatId
+ * @returns {Promise<LinkedUserType[]>}
+ */
+export async function getByChatId(chatId) {
+  if (useMongo) {
+    const docs = await LinkedUser.find({ chatId }).lean();
+    return docs.map((d) => ({
+      telegramUserId: d.telegramUserId,
+      chatId: d.chatId,
+      steamId64: d.steamId64,
+      lastTag: d.lastTag ?? undefined,
+    }));
+  }
+  const users = await load();
+  return users.filter((u) => u.chatId === chatId);
+}
+
+/**
  * Truncate tag to Telegram limit (0-16 chars, no emoji).
  * @param {string} tag
  * @returns {string}
