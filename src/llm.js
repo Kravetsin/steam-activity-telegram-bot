@@ -48,6 +48,21 @@ async function callWithRetry(fn) {
   }
 }
 
+function stripMarkdown(text) {
+  let t = text;
+  t = t.replace(/^\s*[*\-+]\s+/gm, '');
+  t = t.replace(/^\s*\d+\.\s+/gm, '');
+  t = t.replace(/^#{1,6}\s+/gm, '');
+  t = t.replace(/\*\*(.+?)\*\*/g, '$1');
+  t = t.replace(/__(.+?)__/g, '$1');
+  t = t.replace(/(^|[^*])\*(?!\*)([^*\n]+?)\*(?!\*)/g, '$1$2');
+  t = t.replace(/(^|[^_])_(?!_)([^_\n]+?)_(?!_)/g, '$1$2');
+  t = t.replace(/`([^`]+)`/g, '$1');
+  t = t.replace(/\[(\d+)\]/g, '');
+  t = t.replace(/\n{3,}/g, '\n\n');
+  return t.trim();
+}
+
 export async function generateReply({ systemInstruction, contents }) {
   try {
     const response = await callWithRetry(() =>
@@ -58,6 +73,7 @@ export async function generateReply({ systemInstruction, contents }) {
           systemInstruction,
           temperature: 0.9,
           maxOutputTokens: 400,
+          tools: [{ googleSearch: {} }],
         },
       })
     );
@@ -65,7 +81,7 @@ export async function generateReply({ systemInstruction, contents }) {
     if (!text || !text.trim()) {
       throw new Error('Empty response from Gemini');
     }
-    return text.trim();
+    return stripMarkdown(text);
   } catch (err) {
     if (isRateLimit(err) || isTransient(err)) {
       throw new LLMUnavailableError(err.message || 'service unavailable');
