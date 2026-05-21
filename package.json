@@ -1,18 +1,18 @@
 {
-  "name": "steam-activity-telegram-bot",
-  "version": "1.0.0",
-  "description": "Telegram bot that sets user tags based on Steam activity",
+  "name": "ai-chat-telegram-bot",
+  "version": "0.1.0",
+  "description": "AI chat companion for small Telegram group chats, powered by Gemini",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js"
   },
-  "keywords": ["telegram", "bot", "steam"],
+  "keywords": ["telegram", "bot", "ai", "gemini", "chat"],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "axios": "^1.7.7",
+    "@google/genai": "^2.4.0",
     "dotenv": "^16.4.5",
     "mongoose": "^8.6.0",
     "telegraf": "^4.16.3"

@@ -1,12 +1,21 @@
-# Steam Activity Telegram Bot
+# AI Chat Telegram Bot
 
-A Telegram bot that updates chat member tags based on their Steam activity: it displays the name of the game the user is currently playing.
+A Telegram bot that joins a group chat as an AI participant. Reads every message, responds in a sarcastic persona, learns stable facts about chat members over time. Powered by Google Gemini (free tier).
+
+## How it works
+
+- Listens to every text message in groups where it's added.
+- **Ignores** emoji-only messages, single-character messages, and slash commands.
+- Holds a rolling context window of the last ~25 messages per chat and feeds them to Gemini together with a persona system prompt.
+- Once a day at `DAILY_RESET_HOUR` runs a single Gemini call per chat that extracts stable facts about each user, saves them, and clears the day's messages. These facts are injected into future prompts so the bot "remembers" people across the rolling window.
+- If Gemini's free-tier rate limit is hit, replies with a randomized snarky fallback phrase instead.
 
 ## Requirements
 
 - Node.js 18+
-- [Steam Web API](https://steamcommunity.com/dev/apikey) key
-- Bot token from [@BotFather](https://t.me/BotFather)
+- Telegram bot token from [@BotFather](https://t.me/BotFather)
+- Gemini API key from [AI Studio](https://aistudio.google.com/apikey) (free tier is enough)
+- MongoDB connection string (Atlas free tier, or any Mongo deployment)
 
 ## Installation
 
@@ -17,61 +26,50 @@ cp .env.example .env
 
 Fill in `.env`:
 
-- `STEAM_API_KEY` — Steam Web API key
-- `TELEGRAM_BOT_TOKEN` — Bot token
-- `TELEGRAM_CHAT_ID` — (optional) Chat ID if the bot only runs in one chat
-- `POLL_INTERVAL_MS` — (optional) Steam poll interval in ms, default 60000 (1 min)
-- `PING_MENTIONS` — (optional) Space-separated @usernames for the `/ping` command (e.g. `@user1 @user2`). Kept in `.env` only so the list is not committed to the repo.
-- `MONGODB_URI` — (optional) MongoDB connection string (e.g. [MongoDB Atlas](https://www.mongodb.com/atlas) or a DB on Render). If set, Steam link data is stored in MongoDB and survives restarts and redeploys. If not set, data is stored in `data/linked-users.json`.
+- `TELEGRAM_BOT_TOKEN` — required, from BotFather.
+- `GEMINI_API_KEY` — required, from AI Studio.
+- `MONGODB_URI` — required, e.g. `mongodb+srv://...`.
+- `BOT_NAME` — optional, name used in the persona prompt.
+- `GEMINI_MODEL` — optional, defaults to `gemini-2.5-flash-lite`.
+- `DAILY_RESET_HOUR` — optional, defaults to `4`.
+- `CONTEXT_WINDOW` — optional, defaults to `25`.
+
+## Setting up the bot in a group
+
+1. **Disable Privacy Mode** in @BotFather: `/mybots` → choose bot → **Bot Settings → Group Privacy → Turn off**. Without this, the bot will only see messages that explicitly mention it.
+2. Add the bot to a group.
+3. (If the bot was already in the group when you toggled privacy mode, remove it and add it back so the change takes effect.)
 
 ## Running
 
 ```bash
-npm start
+npm start          # production
+npm run dev        # nodemon, restarts on file changes
 ```
 
-Development mode with auto-restart:
+## Deploying (Render.com)
 
-```bash
-npm run dev
-```
-
-## Deploying (e.g. Render.com)
-
-- **Background Worker** (recommended): Create a "Background Worker" service. Start command: `npm start`. No port is required.
-- **Web Service**: If you use a "Web Service", the app binds to `PORT` when set and responds with "Bot is running" so Render's health check passes. Set all env vars in the Render dashboard.
-- Set `MONGODB_URI` so that Steam link data persists across restarts and redeploys (otherwise the filesystem is ephemeral and `data/linked-users.json` is lost).
-
-## Setting up the bot in a group
-
-1. Add the bot to a supergroup.
-2. Make the bot an **administrator** with the **"Manage member tags"** (can_manage_tags) permission. Without this, tags cannot be updated.
-
-## Commands
-
-- **`/link <Steam ID or vanity>`** — Link your Steam ID to your account in this chat. You can use a 64-bit Steam ID (17 digits) or a custom URL (e.g. username from your profile link).
-- **`/unlink`** — Unlink your Steam ID in the current chat.
-- **`/ping`** — Sends a message that mentions all usernames listed in `PING_MENTIONS` (from `.env`). Use it to notify a fixed list of people in the group (e.g. for game sessions). If `PING_MENTIONS` is not set, the bot replies that the list is not configured.
-
-After linking, the bot periodically polls the Steam API and updates the member's tag: either the current game name or "Not in game".
-
-## Limitations
-
-- **Steam:** The user's profile must be public (or "Friends only"), otherwise the current game is not returned by the API.
-- **Telegram:** Tag is up to 16 characters, no emoji. Long game names are truncated.
-- **Regular members** get a member tag via `setChatMemberTag` (Bot API 9.5+, requires bot to have *can_manage_tags*). **Administrators** get a custom title via `setChatAdministratorCustomTitle`; the bot can only set custom titles for admins it has promoted (or for any admin if the bot is the chat owner).
+- Use a **Background Worker** (recommended) with start command `npm start`.
+- Or use a **Web Service**: the bot binds to `PORT` when set and responds with `Bot is running` on `/` so the health check passes.
+- Set all env vars in the Render dashboard.
 
 ## Project structure
 
 ```
 src/
-  index.js   — Entry point, MongoDB connection, bot and scheduler startup
-  bot.js     — /link, /unlink, /ping commands, tag setting
-  steam.js   — Steam API requests (ResolveVanityURL, GetPlayerSummaries)
-  storage.js — Link storage (MongoDB when MONGODB_URI set, else JSON in data/)
+  index.js               — entry point: env validation, Mongo connect, bot launch, scheduler
+  config.js              — central env-var parsing and validation
+  bot.js                 — Telegram message handler: filter → load context → Gemini → reply
+  llm.js                 — Gemini wrapper, rate-limit detection
+  prompts.js             — persona prompt template, fact-extraction prompt, fallback phrases
+  storage.js             — Mongoose CRUD for messages and facts
+  scheduler.js           — daily fact extraction + context cleanup
   models/
-    LinkedUser.js — Mongoose schema for linked users
-  scheduler.js — Periodic Steam polling and tag updates
+    ChatMessage.js       — rolling chat history
+    UserFact.js          — per-user extracted facts (capped at 50 per user per chat)
 ```
 
-Link data is stored in MongoDB when `MONGODB_URI` is set; otherwise in `data/linked-users.json`.
+## Notes
+
+- Free-tier data is used by Google for model training — avoid feeding sensitive content.
+- The persona is intentionally sarcastic but has guardrails (no personal attacks, no politics, no NSFW) built into the system prompt. Tune `src/prompts.js` to taste.
