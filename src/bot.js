@@ -115,6 +115,10 @@ export function createBot() {
     const userId = from.id;
     const name = displayName(from);
 
+    console.log(
+      `[pid=${process.pid}] msg update=${ctx.update?.update_id} msg_id=${ctx.message?.message_id} chat=${chatId} from=${name}: "${(text || '').slice(0, 60)}"`
+    );
+
     try {
       await storage.appendChatMessage({
         chatId,

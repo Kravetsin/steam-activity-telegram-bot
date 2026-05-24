@@ -34,20 +34,22 @@ if (config.port) {
   }).listen(config.port, () => console.log(`Health-check listener on port ${config.port}`));
 }
 
-console.log(`Bot starting as ${config.botName} (model: ${config.llmModel} @ ${config.llmBaseUrl})`);
+console.log(`Bot starting as ${config.botName} (pid=${process.pid}, model: ${config.llmModel} @ ${config.llmBaseUrl})`);
 
 async function launchWithRetry() {
   for (let attempt = 1; ; attempt++) {
     try {
       await bot.launch({ allowedUpdates: ['message'], dropPendingUpdates: true });
-      console.log('Bot polling stopped');
+      console.log(`[pid=${process.pid}] Bot polling stopped`);
       return;
     } catch (err) {
+      // Defensive cleanup of any partial polling state before retry
+      try { bot.stop('retry-cleanup'); } catch (_) {}
       const code = err?.response?.error_code;
       const is409 = code === 409;
       const delaySec = is409 ? 10 : 30;
       console.warn(
-        `Bot launch attempt ${attempt} failed${is409 ? ' (409 deploy overlap)' : ''}: ${err.message}. Retrying in ${delaySec}s…`
+        `[pid=${process.pid}] Bot launch attempt ${attempt} failed${is409 ? ' (409 deploy overlap)' : ''}: ${err.message}. Retrying in ${delaySec}s…`
       );
       await new Promise((r) => setTimeout(r, delaySec * 1000));
     }
