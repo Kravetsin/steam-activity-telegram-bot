@@ -36,11 +36,25 @@ if (config.port) {
 
 console.log(`Bot starting as ${config.botName} (model: ${config.llmModel} @ ${config.llmBaseUrl})`);
 
-bot.launch({ allowedUpdates: ['message'], dropPendingUpdates: true }).catch((err) => {
-  console.error('Bot launch failed:', err);
-  process.exit(1);
-});
+async function launchWithRetry() {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await bot.launch({ allowedUpdates: ['message'], dropPendingUpdates: true });
+      console.log('Bot polling stopped');
+      return;
+    } catch (err) {
+      const code = err?.response?.error_code;
+      const is409 = code === 409;
+      const delaySec = is409 ? 10 : 30;
+      console.warn(
+        `Bot launch attempt ${attempt} failed${is409 ? ' (409 deploy overlap)' : ''}: ${err.message}. Retrying in ${delaySec}s…`
+      );
+      await new Promise((r) => setTimeout(r, delaySec * 1000));
+    }
+  }
+}
 
+launchWithRetry();
 startScheduler();
 
 function shutdown(signal) {
