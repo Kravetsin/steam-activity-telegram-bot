@@ -159,7 +159,7 @@ export function createBot() {
         }
         return;
       }
-      console.error('Gemini generateReply failed:', err.message);
+      console.error('LLM generateReply failed:', err.message);
       return;
     }
 

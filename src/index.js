@@ -34,7 +34,7 @@ if (config.port) {
   }).listen(config.port, () => console.log(`Health-check listener on port ${config.port}`));
 }
 
-console.log(`Bot starting as ${config.botName} (model: ${config.geminiModel})`);
+console.log(`Bot starting as ${config.botName} (model: ${config.llmModel} @ ${config.llmBaseUrl})`);
 
 bot.launch({ allowedUpdates: ['message'], dropPendingUpdates: true }).catch((err) => {
   console.error('Bot launch failed:', err);
