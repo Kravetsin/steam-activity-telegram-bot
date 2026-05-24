@@ -1,18 +1,23 @@
 {
   "name": "ai-chat-telegram-bot",
   "version": "0.1.0",
-  "description": "AI chat companion for small Telegram group chats, powered by Gemini",
+  "description": "AI chat companion for small Telegram group chats, powered by Groq (or any OpenAI-compatible LLM provider)",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js"
   },
-  "keywords": ["telegram", "bot", "ai", "gemini", "chat"],
+  "keywords": [
+    "telegram",
+    "bot",
+    "ai",
+    "groq",
+    "chat"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@google/genai": "^2.4.0",
     "dotenv": "^16.4.5",
     "mongoose": "^8.6.0",
     "telegraf": "^4.16.3"

@@ -1,7 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
 import { config } from './config.js';
-
-const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
 
 export class LLMUnavailableError extends Error {
   constructor(message) {
@@ -12,37 +9,43 @@ export class LLMUnavailableError extends Error {
 
 function isRateLimit(err) {
   if (!err) return false;
-  if (err.status === 429 || err.code === 429) return true;
-  const msg = String(err.message || err).toLowerCase();
-  return (
-    msg.includes('"code":429') ||
-    msg.includes('resource_exhausted') ||
-    msg.includes('quota') ||
-    msg.includes('rate limit') ||
-    msg.includes('too many requests')
-  );
+  if (err.status === 429) return true;
+  const msg = String(err.message || '').toLowerCase();
+  return msg.includes('rate limit') || msg.includes('too many requests') || msg.includes('quota');
 }
 
 function isTransient(err) {
   if (!err) return false;
-  if (err.status === 503 || err.code === 503 || err.status === 500) return true;
-  const msg = String(err.message || err).toLowerCase();
-  return (
-    msg.includes('"code":503') ||
-    msg.includes('"code":500') ||
-    msg.includes('unavailable') ||
-    msg.includes('high demand') ||
-    msg.includes('internal error')
-  );
+  if ([500, 502, 503, 504].includes(err.status)) return true;
+  const msg = String(err.message || '').toLowerCase();
+  return msg.includes('unavailable') || msg.includes('overloaded') || msg.includes('timeout');
 }
 
-async function callWithRetry(fn) {
+async function callLLM(payload) {
+  const res = await fetch(`${config.llmBaseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.llmApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    const err = new Error(`LLM ${res.status}: ${body.slice(0, 500)}`);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+async function callWithRetry(payload) {
   try {
-    return await fn();
+    return await callLLM(payload);
   } catch (err) {
     if (isTransient(err)) {
       await new Promise((r) => setTimeout(r, 1500));
-      return fn();
+      return callLLM(payload);
     }
     throw err;
   }
@@ -63,23 +66,34 @@ function stripMarkdown(text) {
   return t.trim();
 }
 
-export async function generateReply({ systemInstruction, contents }) {
+function stripCodeFence(text) {
+  return text.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+}
+
+function extractJsonObject(text) {
+  // Find first { and last } and parse substring — defensive against model adding preamble/postamble
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first === -1 || last === -1 || last <= first) {
+    throw new Error('No JSON object found in response');
+  }
+  return JSON.parse(text.substring(first, last + 1));
+}
+
+export async function generateReply({ systemInstruction, messages }) {
   try {
-    const response = await callWithRetry(() =>
-      ai.models.generateContent({
-        model: config.geminiModel,
-        contents,
-        config: {
-          systemInstruction,
-          temperature: 0.9,
-          maxOutputTokens: 400,
-          tools: [{ googleSearch: {} }],
-        },
-      })
-    );
-    const text = response.text;
+    const data = await callWithRetry({
+      model: config.llmModel,
+      messages: [
+        { role: 'system', content: systemInstruction },
+        ...messages,
+      ],
+      temperature: 0.9,
+      max_tokens: 400,
+    });
+    const text = data?.choices?.[0]?.message?.content;
     if (!text || !text.trim()) {
-      throw new Error('Empty response from Gemini');
+      throw new Error('Empty response from LLM');
     }
     return stripMarkdown(text);
   } catch (err) {
@@ -92,23 +106,25 @@ export async function generateReply({ systemInstruction, contents }) {
 
 export async function extractFacts({ systemInstruction, prompt }) {
   try {
-    const response = await callWithRetry(() =>
-      ai.models.generateContent({
-        model: config.geminiModel,
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: {
-          systemInstruction,
-          temperature: 0.3,
-          responseMimeType: 'application/json',
-          maxOutputTokens: 2000,
-        },
-      })
-    );
-    const text = response.text;
+    const data = await callWithRetry({
+      model: config.llmModel,
+      messages: [
+        { role: 'system', content: systemInstruction },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.3,
+      max_tokens: 2000,
+    });
+    let text = data?.choices?.[0]?.message?.content;
     if (!text || !text.trim()) {
-      throw new Error('Empty response from Gemini fact extraction');
+      throw new Error('Empty response from LLM fact extraction');
     }
-    return JSON.parse(text);
+    text = stripCodeFence(text);
+    try {
+      return JSON.parse(text);
+    } catch (_) {
+      return extractJsonObject(text);
+    }
   } catch (err) {
     if (isRateLimit(err) || isTransient(err)) {
       throw new LLMUnavailableError(err.message || 'service unavailable');

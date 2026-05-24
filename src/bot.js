@@ -65,26 +65,26 @@ function displayName(from) {
   return 'User' + from.id;
 }
 
-function historyToContents(history) {
+function buildMessages(history) {
   const turns = history.map((m) => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    text: m.role === 'assistant' ? m.text : `${m.displayName}: ${m.text}`,
+    role: m.role === 'assistant' ? 'assistant' : 'user',
+    content: m.role === 'assistant' ? m.text : `${m.displayName}: ${m.text}`,
   }));
 
-  const contents = [];
+  const merged = [];
   for (const t of turns) {
-    const last = contents[contents.length - 1];
+    const last = merged[merged.length - 1];
     if (last && last.role === t.role) {
-      last.parts[0].text += '\n' + t.text;
+      last.content += '\n' + t.content;
     } else {
-      contents.push({ role: t.role, parts: [{ text: t.text }] });
+      merged.push({ ...t });
     }
   }
 
-  while (contents.length > 0 && contents[0].role !== 'user') contents.shift();
-  while (contents.length > 0 && contents[contents.length - 1].role !== 'user') contents.pop();
+  while (merged.length > 0 && merged[0].role !== 'user') merged.shift();
+  while (merged.length > 0 && merged[merged.length - 1].role !== 'user') merged.pop();
 
-  return contents;
+  return merged;
 }
 
 export function createBot() {
@@ -133,8 +133,8 @@ export function createBot() {
       return;
     }
 
-    const contents = historyToContents(history);
-    if (contents.length === 0) return;
+    const messages = buildMessages(history);
+    if (messages.length === 0) return;
 
     const persona = prompts.buildPersonaPrompt(userFacts);
 
@@ -146,7 +146,7 @@ export function createBot() {
 
     let response;
     try {
-      response = await llm.generateReply({ systemInstruction: persona, contents });
+      response = await llm.generateReply({ systemInstruction: persona, messages });
     } catch (err) {
       if (err instanceof llm.LLMUnavailableError) {
         const shouldNotify = markCooldownReturnShouldNotify(chatId);

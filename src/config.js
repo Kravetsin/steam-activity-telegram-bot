@@ -10,9 +10,10 @@ function intOrDefault(value, fallback) {
 
 export const config = {
   telegramBotToken: env.TELEGRAM_BOT_TOKEN || '',
-  geminiApiKey: env.GEMINI_API_KEY || '',
+  llmApiKey: env.LLM_API_KEY || '',
+  llmBaseUrl: (env.LLM_BASE_URL || 'https://api.groq.com/openai/v1').replace(/\/$/, ''),
+  llmModel: env.LLM_MODEL || 'llama-3.3-70b-versatile',
   mongodbUri: env.MONGODB_URI || '',
-  geminiModel: env.GEMINI_MODEL || 'gemini-2.5-flash-lite',
   botName: env.BOT_NAME || 'Бот',
   dailyResetHour: Math.min(23, Math.max(0, intOrDefault(env.DAILY_RESET_HOUR, 4))),
   contextWindow: Math.min(200, Math.max(5, intOrDefault(env.CONTEXT_WINDOW, 25))),
@@ -25,7 +26,7 @@ export const config = {
 export function validateConfig() {
   const missing = [];
   if (!config.telegramBotToken) missing.push('TELEGRAM_BOT_TOKEN');
-  if (!config.geminiApiKey) missing.push('GEMINI_API_KEY');
+  if (!config.llmApiKey) missing.push('LLM_API_KEY');
   if (!config.mongodbUri) missing.push('MONGODB_URI');
   if (missing.length) {
     throw new Error(`Missing required env vars: ${missing.join(', ')}`);
