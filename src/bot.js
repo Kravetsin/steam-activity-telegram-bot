@@ -65,6 +65,17 @@ function displayName(from) {
   return 'User' + from.id;
 }
 
+function cleanBotResponse(text) {
+  if (!text) return '';
+  let t = text.trim();
+  // Strip leading "Name:" prefix if model accidentally added one
+  // (matches Latin/Cyrillic word + optional spaces + ":" + space at the start)
+  t = t.replace(/^[A-Za-zА-Яа-яЁё][\wА-Яа-яЁё\-]{0,30}\s*:\s*/, '');
+  // Strip leading quotes that sometimes wrap the response
+  t = t.replace(/^[«"']+\s*/, '').replace(/\s*[»"']+$/, '');
+  return t.trim();
+}
+
 function buildMessages(history) {
   const turns = history.map((m) => ({
     role: m.role === 'assistant' ? 'assistant' : 'user',
@@ -165,8 +176,14 @@ export function createBot() {
 
     clearCooldown(chatId);
 
+    const cleaned = cleanBotResponse(response);
+    if (!cleaned || cleaned.length < 2) {
+      console.warn(`LLM returned too-short response (raw="${response}", cleaned="${cleaned}") — skipping`);
+      return;
+    }
+
     try {
-      await ctx.reply(response, { disable_notification: true });
+      await ctx.reply(cleaned, { disable_notification: true });
     } catch (err) {
       console.error('Failed to send reply:', err.message);
       return;
@@ -178,7 +195,7 @@ export function createBot() {
         telegramUserId: ctx.botInfo?.id ?? 0,
         displayName: config.botName,
         role: 'assistant',
-        text: response,
+        text: cleaned,
       });
     } catch (err) {
       console.error('Failed to save bot reply:', err.message);
