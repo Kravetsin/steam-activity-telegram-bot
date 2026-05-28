@@ -18,6 +18,7 @@ export const config = {
   dailyResetHour: Math.min(23, Math.max(0, intOrDefault(env.DAILY_RESET_HOUR, 4))),
   contextWindow: Math.min(200, Math.max(5, intOrDefault(env.CONTEXT_WINDOW, 25))),
   port: env.PORT ? Number(env.PORT) : null,
+  webhookDomain: (env.WEBHOOK_DOMAIN || '').replace(/\/$/, ''),
   dnsServers: env.DNS_SERVERS
     ? env.DNS_SERVERS.split(',').map((s) => s.trim()).filter(Boolean)
     : [],
