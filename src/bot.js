@@ -3,6 +3,7 @@ import { config } from './config.js';
 import * as storage from './storage.js';
 import * as llm from './llm.js';
 import * as prompts from './prompts.js';
+import { buildImageUrl, pickImageCaption, detectImageRequest } from './images.js';
 
 const EMOJI_RE = /[\p{Extended_Pictographic}\p{Emoji_Modifier}‍️]/gu;
 
@@ -139,6 +140,27 @@ export function createBot() {
     }
 
     if (!isBotAddressed(ctx.message, ctx.botInfo)) return;
+
+    // Image-generation shortcut: handled before LLM cooldown check, doesn't touch LLM quota
+    const imagePrompt = detectImageRequest(text);
+    if (imagePrompt) {
+      try {
+        ctx.sendChatAction('upload_photo').catch(() => {});
+        const url = buildImageUrl(imagePrompt);
+        const caption = pickImageCaption();
+        await ctx.replyWithPhoto(url, { caption, disable_notification: true });
+        await storage.appendChatMessage({
+          chatId,
+          telegramUserId: ctx.botInfo?.id ?? 0,
+          displayName: config.botName,
+          role: 'assistant',
+          text: `[нарисовал картинку по запросу "${imagePrompt}"] ${caption}`,
+        });
+      } catch (err) {
+        console.error('Image generation failed:', err.message);
+      }
+      return;
+    }
 
     if (isInCooldown(chatId)) return;
 
