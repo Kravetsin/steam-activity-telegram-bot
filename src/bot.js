@@ -71,6 +71,12 @@ function cleanBotResponse(text) {
   // Strip leading "Name:" prefix if model accidentally added one
   // (matches Latin/Cyrillic word + optional spaces + ":" + space at the start)
   t = t.replace(/^[A-Za-zА-Яа-яЁё][\wА-Яа-яЁё\-]{0,30}\s*:\s*/, '');
+  // Strip leading parenthetical "actions" reasoning models love to add: "(Хмыкнул)", "(Спокойно зыркает...)"
+  t = t.replace(/^\(\s*[^)]{1,100}\s*\)\s*/, '');
+  // Strip leading <think>...</think> blocks some reasoning models leak through
+  t = t.replace(/^<think>[\s\S]*?<\/think>\s*/i, '');
+  // Strip leading italics-as-action: "*вздыхает*" at the start
+  t = t.replace(/^\*[^*\n]{1,80}\*\s*/, '');
   // Strip leading quotes that sometimes wrap the response
   t = t.replace(/^[«"']+\s*/, '').replace(/\s*[»"']+$/, '');
   return t.trim();

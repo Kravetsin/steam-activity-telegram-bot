@@ -89,7 +89,7 @@ export async function generateReply({ systemInstruction, messages }) {
         ...messages,
       ],
       temperature: 0.9,
-      max_tokens: 400,
+      max_tokens: 1500,
     });
     const text = data?.choices?.[0]?.message?.content;
     if (!text || !text.trim()) {
