@@ -3,7 +3,12 @@ import { config } from './config.js';
 import * as storage from './storage.js';
 import * as llm from './llm.js';
 import * as prompts from './prompts.js';
-import { buildImageUrl, pickImageCaption, detectImageRequest } from './images.js';
+import {
+  buildImageUrl,
+  pickImageCaption,
+  detectImageRequest,
+  translateImagePrompt,
+} from './images.js';
 
 const EMOJI_RE = /[\p{Extended_Pictographic}\p{Emoji_Modifier}‍️]/gu;
 
@@ -141,12 +146,18 @@ export function createBot() {
 
     if (!isBotAddressed(ctx.message, ctx.botInfo)) return;
 
-    // Image-generation shortcut: handled before LLM cooldown check, doesn't touch LLM quota
-    const imagePrompt = detectImageRequest(text);
-    if (imagePrompt) {
+    // Image-generation shortcut: detect "нарисуй ..." trigger.
+    // Uses LLM to translate Russian → detailed English FLUX prompt + negative_prompt.
+    const rawImagePrompt = detectImageRequest(text);
+    if (rawImagePrompt) {
       try {
         ctx.sendChatAction('upload_photo').catch(() => {});
-        const url = buildImageUrl(imagePrompt);
+        const { prompt: enrichedPrompt, negativePrompt, translated } =
+          await translateImagePrompt(rawImagePrompt);
+        const url = buildImageUrl(enrichedPrompt, {
+          negativePrompt,
+          alreadyEnriched: translated,
+        });
         const caption = pickImageCaption();
         await ctx.replyWithPhoto(url, { caption, disable_notification: true });
         await storage.appendChatMessage({
@@ -154,7 +165,7 @@ export function createBot() {
           telegramUserId: ctx.botInfo?.id ?? 0,
           displayName: config.botName,
           role: 'assistant',
-          text: `[нарисовал картинку по запросу "${imagePrompt}"] ${caption}`,
+          text: `[нарисовал картинку по запросу "${rawImagePrompt}"] ${caption}`,
         });
       } catch (err) {
         console.error('Image generation failed:', err.message);
