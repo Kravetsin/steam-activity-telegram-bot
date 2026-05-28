@@ -89,11 +89,16 @@ export async function generateReply({ systemInstruction, messages }) {
         ...messages,
       ],
       temperature: 0.9,
-      max_tokens: 1500,
+      max_tokens: 8000,
     });
     const text = data?.choices?.[0]?.message?.content;
     if (!text || !text.trim()) {
-      throw new Error('Empty response from LLM');
+      // Likely reasoning-model ate all the budget — log usage so we can tune
+      const usage = data?.usage;
+      const finishReason = data?.choices?.[0]?.finish_reason;
+      throw new Error(
+        `Empty response from LLM (finish=${finishReason}, completion=${usage?.completion_tokens}, reasoning=${usage?.completion_tokens_details?.reasoning_tokens ?? '?'})`
+      );
     }
     return stripMarkdown(text);
   } catch (err) {
