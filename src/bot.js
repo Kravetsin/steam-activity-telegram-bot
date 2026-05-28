@@ -165,7 +165,7 @@ export function createBot() {
           telegramUserId: ctx.botInfo?.id ?? 0,
           displayName: config.botName,
           role: 'assistant',
-          text: `[нарисовал картинку по запросу "${rawImagePrompt}"] ${caption}`,
+          text: caption,
         });
       } catch (err) {
         console.error('Image generation failed:', err.message);
@@ -219,17 +219,40 @@ export function createBot() {
 
     clearCooldown(chatId);
 
-    const cleaned = cleanBotResponse(response);
-    if (!cleaned || cleaned.length < 2) {
-      console.warn(`LLM returned too-short response (raw="${response}", cleaned="${cleaned}") — skipping`);
+    // Extract any inline <image>...</image> tags Geralt decided to include
+    const imageTagRe = /<image>([\s\S]*?)<\/image>/gi;
+    const inlinePrompts = [];
+    const textWithoutImageTags = response.replace(imageTagRe, (_, p) => {
+      const trimmed = p.trim();
+      if (trimmed) inlinePrompts.push(trimmed);
+      return '';
+    });
+
+    const cleaned = cleanBotResponse(textWithoutImageTags);
+
+    // If there's neither text nor image, treat as too-short and skip
+    if (!cleaned.length && !inlinePrompts.length) {
+      console.warn(`LLM returned too-short response (raw="${response}") — skipping`);
       return;
     }
 
-    try {
-      await ctx.reply(cleaned, { disable_notification: true });
-    } catch (err) {
-      console.error('Failed to send reply:', err.message);
-      return;
+    if (cleaned.length >= 2) {
+      try {
+        await ctx.reply(cleaned, { disable_notification: true });
+      } catch (err) {
+        console.error('Failed to send reply:', err.message);
+      }
+    }
+
+    // Send any inline-generated images
+    for (const imagePrompt of inlinePrompts) {
+      try {
+        ctx.sendChatAction('upload_photo').catch(() => {});
+        const url = buildImageUrl(imagePrompt, { alreadyEnriched: true });
+        await ctx.replyWithPhoto(url, { disable_notification: true });
+      } catch (err) {
+        console.error('Inline image generation failed:', err.message);
+      }
     }
 
     try {
@@ -238,7 +261,7 @@ export function createBot() {
         telegramUserId: ctx.botInfo?.id ?? 0,
         displayName: config.botName,
         role: 'assistant',
-        text: cleaned,
+        text: cleaned || '(показал картинку)',
       });
     } catch (err) {
       console.error('Failed to save bot reply:', err.message);
