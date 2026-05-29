@@ -110,30 +110,48 @@ export async function generateReply({ systemInstruction, messages }) {
 }
 
 export async function extractFacts({ systemInstruction, prompt }) {
-  try {
-    const data = await callWithRetry({
-      model: config.llmModel,
-      messages: [
-        { role: 'system', content: systemInstruction },
-        { role: 'user', content: prompt },
-      ],
-      temperature: 0.3,
-      max_tokens: 2000,
-    });
+  // Reasoning models occasionally emit empty or malformed JSON. Retry the whole call
+  // a couple of times (temperature gives variation) before giving up. Rate-limit /
+  // transient errors are NOT retried here — surfaced immediately as LLMUnavailableError.
+  let lastErr;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    let data;
+    try {
+      data = await callWithRetry({
+        model: config.llmModel,
+        messages: [
+          { role: 'system', content: systemInstruction },
+          { role: 'user', content: prompt },
+        ],
+        temperature: 0.3,
+        max_tokens: 8000,
+      });
+    } catch (err) {
+      if (isRateLimit(err) || isTransient(err)) {
+        throw new LLMUnavailableError(err.message || 'service unavailable');
+      }
+      throw err;
+    }
+
     let text = data?.choices?.[0]?.message?.content;
     if (!text || !text.trim()) {
-      throw new Error('Empty response from LLM fact extraction');
+      const u = data?.usage;
+      lastErr = new Error(
+        `Empty extraction (finish=${data?.choices?.[0]?.finish_reason}, completion=${u?.completion_tokens}, reasoning=${u?.completion_tokens_details?.reasoning_tokens ?? '?'})`
+      );
+      continue;
     }
     text = stripCodeFence(text);
     try {
       return JSON.parse(text);
     } catch (_) {
-      return extractJsonObject(text);
+      try {
+        return extractJsonObject(text);
+      } catch (e) {
+        lastErr = e;
+        // malformed JSON — retry
+      }
     }
-  } catch (err) {
-    if (isRateLimit(err) || isTransient(err)) {
-      throw new LLMUnavailableError(err.message || 'service unavailable');
-    }
-    throw err;
   }
+  throw lastErr || new Error('extractFacts failed after retries');
 }
