@@ -6,15 +6,14 @@ const POLLINATIONS = 'https://image.pollinations.ai/prompt';
 // the model picks subject-appropriate style itself (photo for objects, painting for scenes).
 const FALLBACK_STYLE_SUFFIX = ', detailed, 4k, sharp focus';
 
-// Geralt-flavored captions sent with the image. Random pick.
+// Persona-neutral captions sent with the image. Random pick.
 const CAPTIONS = [
-  'Хмм. Смотри что вышло.',
-  'Угу. Готово.',
-  'Вот. Не благодари.',
-  'Чёрт. Не моё ремесло, но держи.',
-  'Готово. В следующий раз сам нарисуй.',
-  'Угу. Не Микеланджело, но сойдёт.',
-  'Хмм. Лучше чем я ожидал.',
+  'Готово.',
+  'Вот, держи.',
+  'Что вышло.',
+  'Готово. Не благодари.',
+  'Нарисовал.',
+  'Лучше, чем ожидал.',
 ];
 
 /**

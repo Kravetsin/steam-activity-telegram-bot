@@ -9,6 +9,7 @@ import {
   detectImageRequest,
   translateImagePrompt,
 } from './images.js';
+import { detectReset, looksLikePersonaRequest, extractPersona } from './persona.js';
 
 const EMOJI_RE = /[\p{Extended_Pictographic}\p{Emoji_Modifier}‍️]/gu;
 
@@ -146,6 +147,73 @@ export function createBot() {
 
     if (!isBotAddressed(ctx.message, ctx.botInfo)) return;
 
+    // ── Persona control via natural language ──
+    // Reset: cheap regex, no LLM call.
+    if (detectReset(text)) {
+      try {
+        await storage.clearChatPersona(chatId);
+        const confirm = 'Окей, снова без роли. Кем мне быть — решайте сами.';
+        await ctx.reply(confirm, { disable_notification: true });
+        await storage.appendChatMessage({
+          chatId,
+          telegramUserId: ctx.botInfo?.id ?? 0,
+          displayName: config.botName,
+          role: 'assistant',
+          text: confirm,
+        });
+      } catch (err) {
+        console.error('Persona reset failed:', err.message);
+      }
+      return;
+    }
+
+    // Set: cheap gate, then LLM confirms + extracts (skips while rate-limited).
+    if (looksLikePersonaRequest(text) && !isInCooldown(chatId)) {
+      let extracted;
+      try {
+        extracted = await extractPersona(text);
+      } catch (_) {
+        extracted = { isPersonaChange: false };
+      }
+      if (extracted.isPersonaChange) {
+        try {
+          await storage.setChatPersona(chatId, extracted.persona, userId, name);
+          console.log(
+            `[pid=${process.pid}] persona set in chat ${chatId} by ${name}: "${extracted.persona.slice(0, 80)}"`
+          );
+          ctx.sendChatAction('typing').catch(() => {});
+          const introSystem = prompts.buildPersonaPrompt([], extracted.persona);
+          let intro;
+          try {
+            intro = await llm.generateReply({
+              systemInstruction: introSystem,
+              messages: [
+                {
+                  role: 'user',
+                  content: `${name}: (ты только что вошёл в этот образ — коротко, одной-двумя фразами поздоровайся с чатом в характере)`,
+                },
+              ],
+            });
+          } catch (_) {
+            intro = 'Готово. Я в образе.';
+          }
+          const cleanedIntro = cleanBotResponse(intro.replace(/<image>[\s\S]*?<\/image>/gi, '')) || 'Готово. Я в образе.';
+          await ctx.reply(cleanedIntro, { disable_notification: true });
+          await storage.appendChatMessage({
+            chatId,
+            telegramUserId: ctx.botInfo?.id ?? 0,
+            displayName: config.botName,
+            role: 'assistant',
+            text: cleanedIntro,
+          });
+        } catch (err) {
+          console.error('Persona set failed:', err.message);
+        }
+        return;
+      }
+      // not a real persona change — fall through to normal handling
+    }
+
     // Image-generation shortcut: detect "нарисуй ..." trigger.
     // Uses LLM to translate Russian → detailed English FLUX prompt + negative_prompt.
     const rawImagePrompt = detectImageRequest(text);
@@ -177,10 +245,12 @@ export function createBot() {
 
     let history;
     let userFacts;
+    let customPersona;
     try {
-      [history, userFacts] = await Promise.all([
+      [history, userFacts, customPersona] = await Promise.all([
         storage.getRecentChatMessages(chatId, config.contextWindow),
         storage.getChatUserFacts(chatId),
+        storage.getChatPersona(chatId),
       ]);
     } catch (err) {
       console.error('Failed to load context:', err.message);
@@ -190,7 +260,7 @@ export function createBot() {
     const messages = buildMessages(history);
     if (messages.length === 0) return;
 
-    const persona = prompts.buildPersonaPrompt(userFacts);
+    const persona = prompts.buildPersonaPrompt(userFacts, customPersona);
 
     try {
       ctx.sendChatAction('typing').catch(() => {});

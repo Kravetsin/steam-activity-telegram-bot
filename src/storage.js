@@ -1,7 +1,25 @@
 import ChatMessage from './models/ChatMessage.js';
 import UserFact from './models/UserFact.js';
+import ChatPersona from './models/ChatPersona.js';
 
 const MAX_FACTS_PER_USER = 50;
+
+export async function getChatPersona(chatId) {
+  const doc = await ChatPersona.findOne({ chatId }).lean();
+  return doc?.persona || null;
+}
+
+export async function setChatPersona(chatId, persona, setByUserId, setByName) {
+  await ChatPersona.updateOne(
+    { chatId },
+    { $set: { persona, setByUserId, setByName, updatedAt: new Date() } },
+    { upsert: true }
+  );
+}
+
+export async function clearChatPersona(chatId) {
+  await ChatPersona.deleteOne({ chatId });
+}
 
 export async function appendChatMessage({ chatId, telegramUserId, displayName, role, text }) {
   await ChatMessage.create({ chatId, telegramUserId, displayName, role, text });
