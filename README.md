@@ -67,7 +67,7 @@ Runs in Docker: one container for the bot, one for PostgreSQL. Setup on a fresh 
 
 ```bash
 # as root
-git clone <repo> /opt/steam-bot
+git clone https://github.com/Kravetsin/steam-activity-telegram-bot.git /opt/steam-bot
 cd /opt/steam-bot
 
 cp .env.example .env
@@ -77,7 +77,7 @@ chmod 600 .env
 sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(openssl rand -hex 24)|" .env
 nano .env      # TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY
 
-chmod +x redeploy.sh backup-db.sh
+chmod +x redeploy.sh update.sh backup-db.sh
 ./redeploy.sh
 docker compose logs -f bot
 ```
@@ -98,7 +98,8 @@ Everyday commands:
 docker compose logs -f bot          # logs
 docker compose restart bot          # after editing .env
 docker compose exec bot npm run extract:now   # run fact extraction immediately
-./redeploy.sh                       # rebuild after a code change
+./update.sh                         # git pull + rebuild
+./redeploy.sh                       # rebuild without pulling
 ```
 
 Restore from a backup:
