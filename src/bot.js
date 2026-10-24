@@ -101,17 +101,33 @@ async function replyFormatted(ctx, text) {
   }
 }
 
-function buildMessages(history) {
-  const turns = history.map((m) => ({
-    role: m.role === 'assistant' ? 'assistant' : 'user',
-    content: m.role === 'assistant' ? m.text : `${m.displayName}: ${m.text}`,
-  }));
+function mergeContent(a, b) {
+  if (typeof a === 'string' && typeof b === 'string') return `${a}\n${b}`;
+  const blocks = (c) => (typeof c === 'string' ? [{ type: 'text', text: c }] : c);
+  const out = [...blocks(a)];
+  for (const block of blocks(b)) {
+    const last = out[out.length - 1];
+    if (block.type === 'text' && last?.type === 'text') last.text += `\n${block.text}`;
+    else out.push({ ...block });
+  }
+  return out;
+}
+
+export function buildMessages(history, images = new Map()) {
+  const turns = history.map((m) => {
+    const text = m.role === 'assistant' ? m.text : `${m.displayName}: ${m.text}`;
+    const image = images.get(m.id);
+    return {
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: image ? [toImageBlock(image), { type: 'text', text }] : text,
+    };
+  });
 
   const merged = [];
   for (const t of turns) {
     const last = merged[merged.length - 1];
     if (last && last.role === t.role) {
-      last.content += '\n' + t.content;
+      last.content = mergeContent(last.content, t.content);
     } else {
       merged.push({ ...t });
     }
@@ -182,8 +198,9 @@ export function createBot() {
       ? `[${attachment.kind === 'photo' ? 'фото' : 'картинка'}]${caption ? ' ' + caption : ''}`
       : text;
 
+    let messageId;
     try {
-      await storage.appendChatMessage({
+      messageId = await storage.appendChatMessage({
         chatId,
         telegramUserId: userId,
         displayName: name,
@@ -203,6 +220,14 @@ export function createBot() {
     if (attachment) {
       try {
         image = await downloadAttachment(ctx.telegram, attachment);
+        // Stored next to the message so the picture stays in context for the next
+        // few turns — otherwise the model sees a bare '[фото]' and calls its own
+        // earlier description a hallucination.
+        await storage.saveChatImage({
+          messageId,
+          mediaType: image.mediaType,
+          data: image.data,
+        });
       } catch (err) {
         console.error('Failed to download attachment:', err.message);
         if (isPrivate) {
@@ -248,28 +273,21 @@ export function createBot() {
 
     let history;
     let userFacts;
+    let images;
     try {
       [history, userFacts] = await Promise.all([
         storage.getRecentChatMessages(chatId, config.contextWindow),
         storage.getChatUserFacts(chatId),
       ]);
+      // Pictures are re-attached to their own turns, newest two only.
+      images = await storage.getChatImages(history.map((m) => m.id));
     } catch (err) {
       console.error('Failed to load context:', err.message);
       return;
     }
 
-    const messages = buildMessages(history);
+    const messages = buildMessages(history, images);
     if (messages.length === 0) return;
-
-    // Attach the picture to the current turn only. Older turns keep just the marker.
-    if (image) {
-      const last = messages[messages.length - 1];
-      const textContent = typeof last.content === 'string' ? last.content : '';
-      last.content = [
-        toImageBlock(image),
-        { type: 'text', text: textContent || '(фото без подписи)' },
-      ];
-    }
 
     const system = prompts.buildSystemPrompt(userFacts);
 

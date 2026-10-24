@@ -5,6 +5,7 @@ const MAX_FACTS_PER_USER = 50;
 // Row shape: keep SQL column names aliased to camelCase, so bot.js / scheduler.js
 // don't have to know about the database.
 const MESSAGE_COLUMNS = `
+  id,
   chat_id          AS "chatId",
   telegram_user_id AS "telegramUserId",
   display_name     AS "displayName",
@@ -14,11 +15,39 @@ const MESSAGE_COLUMNS = `
 `;
 
 export async function appendChatMessage({ chatId, telegramUserId, displayName, role, text }) {
-  await pool.query(
+  const { rows } = await pool.query(
     `INSERT INTO chat_messages (chat_id, telegram_user_id, display_name, role, text)
-     VALUES ($1, $2, $3, $4, $5)`,
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id`,
     [chatId, telegramUserId, displayName ?? '', role, text]
   );
+  return rows[0].id;
+}
+
+export async function saveChatImage({ messageId, mediaType, data }) {
+  await pool.query(
+    `INSERT INTO chat_images (message_id, media_type, data)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (message_id) DO NOTHING`,
+    [messageId, mediaType, data]
+  );
+}
+
+/**
+ * Images for the messages currently in context. Only the newest few are worth
+ * re-sending: every picture costs ~1.5K input tokens on every reply that follows.
+ */
+export async function getChatImages(messageIds, limit = 2) {
+  if (!messageIds.length) return new Map();
+  const { rows } = await pool.query(
+    `SELECT message_id AS "messageId", media_type AS "mediaType", data
+     FROM chat_images
+     WHERE message_id = ANY($1::bigint[])
+     ORDER BY message_id DESC
+     LIMIT $2`,
+    [messageIds, limit]
+  );
+  return new Map(rows.map((r) => [r.messageId, r]));
 }
 
 export async function getRecentChatMessages(chatId, limit) {

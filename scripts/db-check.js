@@ -44,6 +44,20 @@ try {
   const upTo = await storage.getMessagesUpTo(CHAT_ID, new Date(Date.now() + 60_000));
   check('getMessagesUpTo returns the full history', upTo.length === 3);
 
+  // ── images ──
+  const imageMsgId = await storage.appendChatMessage({
+    chatId: CHAT_ID,
+    telegramUserId: USER_ID,
+    displayName: 'Тест',
+    role: 'user',
+    text: '[фото] что это?',
+  });
+  await storage.saveChatImage({ messageId: imageMsgId, mediaType: 'image/png', data: 'iVBORw0KGgo=' });
+  const images = await storage.getChatImages([imageMsgId]);
+  check('image is stored next to its message', images.get(imageMsgId)?.data === 'iVBORw0KGgo=');
+  check('image keeps its media type', images.get(imageMsgId)?.mediaType === 'image/png');
+  check('messages without images have none', (await storage.getChatImages([upTo[0].id])).size === 0);
+
   // ── facts ──
   await storage.appendUserFacts({
     chatId: CHAT_ID,
@@ -64,6 +78,7 @@ try {
   // ── cleanup path used by the daily scheduler ──
   await storage.deleteMessagesUpTo(CHAT_ID, new Date(Date.now() + 60_000));
   check('deleteMessagesUpTo removes the window', (await storage.getRecentChatMessages(CHAT_ID, 10)).length === 0);
+  check('images are deleted with their messages', (await storage.getChatImages([imageMsgId])).size === 0);
 } finally {
   await cleanup();
   await close();

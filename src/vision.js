@@ -51,18 +51,37 @@ export async function downloadAttachment(telegram, attachment) {
     throw new ImageTooLargeError(attachment.size);
   }
 
-  const link = await telegram.getFileLink(attachment.fileId);
-  const res = await fetch(link.href, { signal: AbortSignal.timeout(20_000) });
-  if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);
+  // A single dropped connection shouldn't cost the user their picture: Telegram
+  // downloads do fail transiently (DNS hiccup inside the container, mostly).
+  const ATTEMPTS = 3;
+  let lastError;
 
-  const bytes = Buffer.from(await res.arrayBuffer());
-  if (bytes.length > MAX_BYTES) throw new ImageTooLargeError(bytes.length);
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+    try {
+      const link = await telegram.getFileLink(attachment.fileId);
+      const res = await fetch(link.href, { signal: AbortSignal.timeout(20_000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-  return {
-    mediaType: attachment.mediaType,
-    data: bytes.toString('base64'),
-    sizeKb: Math.round(bytes.length / 1024),
-  };
+      const bytes = Buffer.from(await res.arrayBuffer());
+      if (bytes.length > MAX_BYTES) throw new ImageTooLargeError(bytes.length);
+
+      return {
+        mediaType: attachment.mediaType,
+        data: bytes.toString('base64'),
+        sizeKb: Math.round(bytes.length / 1024),
+      };
+    } catch (err) {
+      if (err instanceof ImageTooLargeError) throw err;
+      lastError = err;
+      const cause = err.cause?.code || err.cause?.message;
+      console.warn(
+        `attachment download ${attempt}/${ATTEMPTS} failed: ${err.message}${cause ? ` (${cause})` : ''}`
+      );
+      if (attempt < ATTEMPTS) await new Promise((r) => setTimeout(r, 400 * attempt));
+    }
+  }
+
+  throw lastError;
 }
 
 /** The API block shape. Goes into the last user turn next to the text. */

@@ -40,6 +40,15 @@ CREATE TABLE IF NOT EXISTS user_facts (
   updated_at       timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (chat_id, telegram_user_id)
 );
+
+-- Attached pictures, base64. Kept only while the message is in history: the FK
+-- cascade removes them when the scheduler deletes old messages.
+CREATE TABLE IF NOT EXISTS chat_images (
+  message_id bigint PRIMARY KEY REFERENCES chat_messages(id) ON DELETE CASCADE,
+  media_type text NOT NULL,
+  data       text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 `;
 
 /**
