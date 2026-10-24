@@ -5,6 +5,13 @@ import * as llm from './llm.js';
 import * as prompts from './prompts.js';
 import { detectImageRequest, translateImagePrompt, buildImageUrl, pickImageCaption } from './images.js';
 import { toTelegramHtml, toPlainText } from './format.js';
+import {
+  pickAttachment,
+  isUnsupportedDocument,
+  downloadAttachment,
+  toImageBlock,
+  ImageTooLargeError,
+} from './vision.js';
 
 const EMOJI_RE = /[\p{Extended_Pictographic}\p{Emoji_Modifier}‍️]/gu;
 
@@ -38,8 +45,9 @@ function clearCooldown(chatId) {
 function isBotAddressed(message, botInfo) {
   if (!message || !botInfo) return false;
   if (message.reply_to_message?.from?.id === botInfo.id) return true;
-  const entities = message.entities || [];
-  const text = message.text || '';
+  // Captions carry their own entity list: a photo is addressed the same way text is.
+  const entities = message.entities || message.caption_entities || [];
+  const text = message.text || message.caption || '';
   const username = botInfo.username ? botInfo.username.toLowerCase() : '';
   for (const e of entities) {
     if (e.type === 'mention' && username) {
@@ -129,7 +137,7 @@ export function createBot() {
     );
   });
 
-  bot.on('text', async (ctx) => {
+  bot.on(['text', 'photo', 'document'], async (ctx) => {
     const chat = ctx.chat;
     if (!chat) return;
 
@@ -141,16 +149,38 @@ export function createBot() {
     const from = ctx.from;
     if (!from || from.is_bot) return;
 
-    const text = ctx.message?.text;
-    if (shouldSkip(text)) return;
+    const message = ctx.message;
+    const caption = (message?.caption || '').trim();
+    const attachment = pickAttachment(message);
+    const text = message?.text ?? caption;
+
+    // A picture on its own is a valid message; an empty one is not.
+    if (!attachment && shouldSkip(text)) return;
 
     const chatId = chat.id;
     const userId = from.id;
     const name = displayName(from);
 
+    // Non-image documents (PDF, archives) are not something the model can read yet.
+    if (isUnsupportedDocument(message)) {
+      console.log(`[pid=${process.pid}] ignoring unsupported document in chat ${chatId}`);
+      if (isPrivate) {
+        await ctx
+          .reply('Пока читаю только картинки: jpg, png, webp, gif. PDF и архивы — нет.')
+          .catch(() => {});
+      }
+      return;
+    }
+
     console.log(
-      `[pid=${process.pid}] msg update=${ctx.update?.update_id} msg_id=${ctx.message?.message_id} chat=${chatId} from=${name}: "${(text || '').slice(0, 60)}"`
+      `[pid=${process.pid}] msg update=${ctx.update?.update_id} msg_id=${message?.message_id} chat=${chatId} from=${name}: "${(text || '').slice(0, 60)}"${attachment ? ' [+image]' : ''}`
     );
+
+    // History is text, so an image is stored as a marker plus its caption. The bytes
+    // are only sent for the current turn — replaying them would balloon every request.
+    const storedText = attachment
+      ? `[${attachment.kind === 'photo' ? 'фото' : 'картинка'}]${caption ? ' ' + caption : ''}`
+      : text;
 
     try {
       await storage.appendChatMessage({
@@ -158,7 +188,7 @@ export function createBot() {
         telegramUserId: userId,
         displayName: name,
         role: 'user',
-        text,
+        text: storedText,
       });
     } catch (err) {
       console.error('Failed to save incoming message:', err.message);
@@ -166,11 +196,30 @@ export function createBot() {
     }
 
     // In a private chat there is nobody else to address: every message is for the bot.
-    if (!isPrivate && !isBotAddressed(ctx.message, ctx.botInfo)) return;
+    if (!isPrivate && !isBotAddressed(message, ctx.botInfo)) return;
+
+    // Download after the addressed-check: no point fetching images nobody asked about.
+    let image = null;
+    if (attachment) {
+      try {
+        image = await downloadAttachment(ctx.telegram, attachment);
+      } catch (err) {
+        console.error('Failed to download attachment:', err.message);
+        if (isPrivate) {
+          const note =
+            err instanceof ImageTooLargeError
+              ? 'Картинка больше 5 МБ — такую не осилю. Сожми и пришли ещё раз.'
+              : 'Не смог скачать картинку, попробуй ещё раз.';
+          await ctx.reply(note).catch(() => {});
+        }
+        return;
+      }
+    }
 
     // Image-generation shortcut: detect "нарисуй ..." trigger.
     // Uses LLM to translate Russian → detailed English FLUX prompt + negative_prompt.
-    const rawImagePrompt = detectImageRequest(text);
+    // Skipped when the message already carries a picture — that one is for looking at.
+    const rawImagePrompt = image ? null : detectImageRequest(text);
     if (rawImagePrompt) {
       try {
         ctx.sendChatAction('upload_photo').catch(() => {});
@@ -180,14 +229,14 @@ export function createBot() {
           negativePrompt,
           alreadyEnriched: translated,
         });
-        const caption = pickImageCaption();
-        await ctx.replyWithPhoto(url, { caption, disable_notification: true });
+        const imageCaption = pickImageCaption();
+        await ctx.replyWithPhoto(url, { caption: imageCaption, disable_notification: true });
         await storage.appendChatMessage({
           chatId,
           telegramUserId: ctx.botInfo?.id ?? 0,
           displayName: config.botName,
           role: 'assistant',
-          text: caption,
+          text: imageCaption,
         });
       } catch (err) {
         console.error('Image generation failed:', err.message);
@@ -211,6 +260,16 @@ export function createBot() {
 
     const messages = buildMessages(history);
     if (messages.length === 0) return;
+
+    // Attach the picture to the current turn only. Older turns keep just the marker.
+    if (image) {
+      const last = messages[messages.length - 1];
+      const textContent = typeof last.content === 'string' ? last.content : '';
+      last.content = [
+        toImageBlock(image),
+        { type: 'text', text: textContent || '(фото без подписи)' },
+      ];
+    }
 
     const system = prompts.buildSystemPrompt(userFacts);
 

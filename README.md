@@ -1,6 +1,6 @@
 # AI Chat Telegram Bot
 
-A Telegram bot that sits in a group chat as a general-purpose assistant. It listens passively, answers when addressed, remembers the participants over time, and can draw pictures. Powered by **Claude (Anthropic)**.
+A Telegram bot that sits in a group chat as a general-purpose assistant. It listens passively, answers when addressed, remembers the participants over time, looks at pictures people send it, and can draw its own. Powered by **Claude (Anthropic)**.
 
 ## How it works
 
@@ -11,6 +11,7 @@ A Telegram bot that sits in a group chat as a general-purpose assistant. It list
 - Holds a rolling context window of the last ~25 messages per chat and sends them to Claude together with an assistant system prompt. Each chat (group or DM) has its own history and facts.
 - Once a day at `DAILY_RESET_HOUR` runs a single structured-output call per chat that extracts stable facts about each user, saves them, and clears the day's messages. Facts are injected into future prompts so the bot "remembers" people across the rolling window.
 - Replies are formatted with Telegram HTML (`<b>`, `<i>`, `<code>`, `<pre>`, links). `src/format.js` whitelists tags, escapes everything else, and falls back to plain text if Telegram still rejects the markup.
+- **Sees images**: photos and image documents (jpg/png/webp/gif) are sent to Claude together with the message, so it can read a screenshot, an error dialog, or code on screen. Only the current picture is uploaded — history keeps a `[фото]` marker, so old images are never re-sent. Anything over 5 MB is refused, and PDFs aren't supported yet.
 - Replies in the language of the person it's answering.
 - All bot replies are sent silently (`disable_notification: true`) so the chat doesn't get pinged.
 - If the API is rate-limited or unavailable, the bot sends a single short phrase and enters a 60-second per-chat cooldown.
@@ -139,7 +140,7 @@ bot.example.com {
 
 ## Models, costs, and tuning
 
-Claude Sonnet 5.5 pricing is $2 / $10 per million input / output tokens. A typical reply in this bot (system prompt + 25-message window ≈ 2.5K input, ~150 output) costs about **$0.0065**, so ~$6.5 per 1000 replies. Haiku 5.5 is ~20x cheaper.
+Claude Sonnet 5.5 pricing is $2 / $10 per million input / output tokens. A typical reply in this bot (system prompt + 25-message window ≈ 2.5K input, ~150 output) costs about **$0.0065**, so ~$6.5 per 1000 replies. Haiku 5.5 is ~20x cheaper. An attached image adds roughly 1.5K input tokens (~$0.003) per picture.
 
 Sonnet 5.5 notes:
 
@@ -157,6 +158,7 @@ src/
   config.js              — env parsing, thinking/effort resolution, validation
   bot.js                 — Telegram message handler: filter → addressed-check → load context → LLM → reply
   format.js              — Telegram HTML sanitizer: whitelist tags, escape the rest, plain-text fallback
+  vision.js              — Telegram attachment → base64 image block for Claude
   llm.js                 — Claude client, error mapping (429/529/5xx/refusals)
   schemas.js             — JSON Schemas for structured outputs (facts, image prompt)
   prompts.js             — assistant system prompt, fact-extraction prompt, fallback phrases
