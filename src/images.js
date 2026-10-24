@@ -1,4 +1,5 @@
 import * as llm from './llm.js';
+import { IMAGE_PROMPT_SCHEMA } from './schemas.js';
 
 const POLLINATIONS = 'https://image.pollinations.ai/prompt';
 
@@ -69,28 +70,20 @@ const TRANSLATION_SYSTEM = `Ты переводишь короткие опис�
 
 Если в negative_prompt нечего добавить — пустая строка "".`;
 
-function extractJsonObject(text) {
-  const first = text.indexOf('{');
-  const last = text.lastIndexOf('}');
-  if (first === -1 || last === -1 || last <= first) {
-    throw new Error('No JSON object in translation response');
-  }
-  return JSON.parse(text.substring(first, last + 1));
-}
-
 /**
  * Translate a Russian user image-request into a detailed English FLUX prompt
  * with extracted negative_prompt. Falls back to lightly-styled raw prompt on failure.
  */
 export async function translateImagePrompt(userPrompt) {
   try {
-    const raw = await llm.generateReply({
+    const json = await llm.generateJSON({
       systemInstruction: TRANSLATION_SYSTEM,
-      messages: [{ role: 'user', content: userPrompt }],
+      prompt: userPrompt,
+      schema: IMAGE_PROMPT_SCHEMA,
+      maxTokens: 1024,
     });
-    const json = extractJsonObject(raw);
-    const prompt = (json.prompt || '').trim();
-    const negativePrompt = (json.negative_prompt || '').trim();
+    const prompt = String(json.prompt || '').trim();
+    const negativePrompt = String(json.negative_prompt || '').trim();
     if (!prompt) throw new Error('Empty prompt from translation');
     return { prompt, negativePrompt, translated: true };
   } catch (err) {

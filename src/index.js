@@ -27,7 +27,9 @@ try {
 
 const bot = createBot();
 
-console.log(`Bot starting as ${config.botName} (pid=${process.pid}, model: ${config.llmModel} @ ${config.llmBaseUrl})`);
+console.log(
+  `Bot starting as ${config.botName} (pid=${process.pid}, model: ${config.anthropicModel}, utility: ${config.anthropicUtilityModel}, effort: ${config.anthropicEffort}, thinking: ${config.anthropicThinking})`
+);
 
 async function runWebhookMode() {
   const botIdPrefix = config.telegramBotToken.split(':')[0];
@@ -44,7 +46,9 @@ async function runWebhookMode() {
       return;
     }
     webhookCallback(req, res);
-  }).listen(port, () => console.log(`[pid=${process.pid}] HTTP server (health + webhook) on port ${port}`));
+  }).listen(port, config.host, () =>
+    console.log(`[pid=${process.pid}] HTTP server (health + webhook) on ${config.host}:${port}`)
+  );
 
   try {
     await bot.telegram.deleteWebhook({ drop_pending_updates: true });
@@ -63,7 +67,9 @@ async function runPollingMode() {
     createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       res.end('Bot is running');
-    }).listen(config.port, () => console.log(`Health-check listener on port ${config.port}`));
+    }).listen(config.port, config.host, () =>
+      console.log(`Health-check listener on ${config.host}:${config.port}`)
+    );
   }
   for (let attempt = 1; ; attempt++) {
     try {

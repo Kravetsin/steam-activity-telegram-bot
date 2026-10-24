@@ -283,6 +283,14 @@ export function createBot() {
         }
         return;
       }
+      if (err instanceof llm.LLMRefusalError) {
+        // Safety classifier declined. Retrying won't help; stay silent rather than
+        // posting an out-of-character error into the chat.
+        console.warn(
+          `Claude refused reply in chat ${chatId} (${err.category || 'no category'}): ${err.explanation}`
+        );
+        return;
+      }
       console.error('LLM generateReply failed:', err.message);
       return;
     }

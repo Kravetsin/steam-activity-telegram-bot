@@ -1,23 +1,27 @@
 {
   "name": "ai-chat-telegram-bot",
   "version": "0.1.0",
-  "description": "AI chat companion for small Telegram group chats, powered by Groq (or any OpenAI-compatible LLM provider)",
+  "description": "AI chat companion for small Telegram group chats, powered by Claude (Anthropic)",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "dev": "nodemon src/index.js",
+    "smoke": "node scripts/smoke.js",
+    "extract:now": "node scripts/extract-now.js"
   },
   "keywords": [
     "telegram",
     "bot",
     "ai",
-    "groq",
+    "claude",
+    "anthropic",
     "chat"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
     "dotenv": "^16.4.5",
     "mongoose": "^8.6.0",
     "telegraf": "^4.16.3"

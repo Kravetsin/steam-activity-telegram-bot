@@ -1,4 +1,5 @@
 import * as llm from './llm.js';
+import { PERSONA_SCHEMA } from './schemas.js';
 
 // Cheap reset detection — no LLM call needed.
 const RESET_RE =
@@ -45,16 +46,12 @@ isPersonaChange = false, если это:
  */
 export async function extractPersona(message) {
   try {
-    const raw = await llm.generateReply({
+    const json = await llm.generateJSON({
       systemInstruction: EXTRACT_SYSTEM,
-      messages: [{ role: 'user', content: message }],
+      prompt: message,
+      schema: PERSONA_SCHEMA,
+      maxTokens: 1024,
     });
-    const first = raw.indexOf('{');
-    const last = raw.lastIndexOf('}');
-    if (first === -1 || last === -1 || last <= first) {
-      return { isPersonaChange: false };
-    }
-    const json = JSON.parse(raw.substring(first, last + 1));
     const persona = String(json.persona || '').trim();
     if (json.isPersonaChange === true && persona) {
       return { isPersonaChange: true, persona };

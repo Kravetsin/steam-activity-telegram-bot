@@ -2,6 +2,7 @@ import { config } from './config.js';
 import * as storage from './storage.js';
 import * as llm from './llm.js';
 import * as prompts from './prompts.js';
+import { FACTS_SCHEMA } from './schemas.js';
 
 // Messages are processed in oldest-first batches. A reasoning LLM + a huge prompt
 // blows the token budget and produces nothing (empty content → fail → backlog never
@@ -33,9 +34,11 @@ async function extractOneBatch(chatId) {
 
   let result;
   try {
-    result = await llm.extractFacts({
+    result = await llm.generateJSON({
       systemInstruction: prompts.getFactExtractionSystem(),
       prompt: prompts.buildFactExtractionPrompt({ existingFacts, messages: batch }),
+      schema: FACTS_SCHEMA,
+      maxTokens: config.anthropicUtilityMaxTokens,
     });
   } catch (err) {
     if (err instanceof llm.LLMUnavailableError) {
@@ -43,9 +46,9 @@ async function extractOneBatch(chatId) {
       console.warn(`[scheduler] chat ${chatId}: extraction unavailable (rate-limited/overloaded) — retry next run`);
       return 'stop';
     }
-    // Non-transient (model gave bad/malformed output even after internal retries).
-    // Sacrifice this batch so a "poison" batch can't block the queue forever.
-    console.error(`[scheduler] chat ${chatId}: extraction failed after retries, skipping batch:`, err.message);
+    // Non-transient (refusal, truncated output, etc.). Sacrifice this batch so a
+    // "poison" batch can't block the queue forever.
+    console.error(`[scheduler] chat ${chatId}: extraction failed, skipping batch:`, err.message);
     try {
       await storage.deleteMessagesUpTo(chatId, batchCutoff);
     } catch (delErr) {

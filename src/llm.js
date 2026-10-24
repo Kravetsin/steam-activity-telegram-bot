@@ -1,4 +1,5 @@
-import { config } from './config.js';
+import Anthropic from '@anthropic-ai/sdk';
+import { config, thinkingForModel } from './config.js';
 
 export class LLMUnavailableError extends Error {
   constructor(message) {
@@ -7,48 +8,66 @@ export class LLMUnavailableError extends Error {
   }
 }
 
-function isRateLimit(err) {
-  if (!err) return false;
-  if (err.status === 429) return true;
-  const msg = String(err.message || '').toLowerCase();
-  return msg.includes('rate limit') || msg.includes('too many requests') || msg.includes('quota');
-}
-
-function isTransient(err) {
-  if (!err) return false;
-  if ([500, 502, 503, 504].includes(err.status)) return true;
-  const msg = String(err.message || '').toLowerCase();
-  return msg.includes('unavailable') || msg.includes('overloaded') || msg.includes('timeout');
-}
-
-async function callLLM(payload) {
-  const res = await fetch(`${config.llmBaseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${config.llmApiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    const err = new Error(`LLM ${res.status}: ${body.slice(0, 500)}`);
-    err.status = res.status;
-    throw err;
+export class LLMRefusalError extends Error {
+  constructor(category, explanation) {
+    super(`Claude refused${category ? ` (${category})` : ''}: ${explanation || 'no explanation given'}`);
+    this.name = 'LLMRefusalError';
+    this.category = category || null;
+    this.explanation = explanation || '';
   }
-  return res.json();
 }
 
-async function callWithRetry(payload) {
+const client = new Anthropic({
+  apiKey: config.anthropicApiKey,
+  maxRetries: 3,
+  timeout: 120_000,
+  ...(config.anthropicBaseUrl ? { baseURL: config.anthropicBaseUrl } : {}),
+});
+
+function isUnavailable(err) {
+  if (!err) return false;
+  if (err.status === 429 || err.status === 529) return true;
+  if (typeof err.status === 'number' && err.status >= 500) return true;
+  if (err.name === 'APIConnectionError' || err.name === 'APIConnectionTimeoutError') return true;
+  const msg = String(err.message || '').toLowerCase();
+  return (
+    msg.includes('overloaded') ||
+    msg.includes('connection error') ||
+    msg.includes('timed out') ||
+    msg.includes('fetch failed')
+  );
+}
+
+async function createMessage(params) {
   try {
-    return await callLLM(payload);
+    return await client.messages.create(params);
   } catch (err) {
-    if (isTransient(err)) {
-      await new Promise((r) => setTimeout(r, 1500));
-      return callLLM(payload);
+    if (isUnavailable(err)) {
+      throw new LLMUnavailableError(err.message || 'service unavailable');
     }
     throw err;
   }
+}
+
+function extractText(message) {
+  return (message?.content || [])
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('')
+    .trim();
+}
+
+function assertNotRefusal(message) {
+  if (message?.stop_reason === 'refusal') {
+    const details = message.stop_details || {};
+    throw new LLMRefusalError(details.category, details.explanation);
+  }
+}
+
+function buildThinking(model) {
+  // Anthropic rejects `thinking: undefined` less gracefully than a missing key,
+  // so only attach it when we actually have a config for this model.
+  return thinkingForModel(model, config.anthropicThinking);
 }
 
 function stripMarkdown(text) {
@@ -66,92 +85,64 @@ function stripMarkdown(text) {
   return t.trim();
 }
 
-function stripCodeFence(text) {
-  return text.replace(/^\s*```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-}
-
-function extractJsonObject(text) {
-  // Find first { and last } and parse substring — defensive against model adding preamble/postamble
-  const first = text.indexOf('{');
-  const last = text.lastIndexOf('}');
-  if (first === -1 || last === -1 || last <= first) {
-    throw new Error('No JSON object found in response');
-  }
-  return JSON.parse(text.substring(first, last + 1));
-}
-
+/**
+ * Free-form chat reply. Returns plain text with light markdown cleanup.
+ */
 export async function generateReply({ systemInstruction, messages }) {
-  try {
-    const data = await callWithRetry({
-      model: config.llmModel,
-      messages: [
-        { role: 'system', content: systemInstruction },
-        ...messages,
-      ],
-      temperature: 0.9,
-      max_tokens: 8000,
-    });
-    const text = data?.choices?.[0]?.message?.content;
-    if (!text || !text.trim()) {
-      // Likely reasoning-model ate all the budget — log usage so we can tune
-      const usage = data?.usage;
-      const finishReason = data?.choices?.[0]?.finish_reason;
-      throw new Error(
-        `Empty response from LLM (finish=${finishReason}, completion=${usage?.completion_tokens}, reasoning=${usage?.completion_tokens_details?.reasoning_tokens ?? '?'})`
-      );
-    }
-    return stripMarkdown(text);
-  } catch (err) {
-    if (isRateLimit(err) || isTransient(err)) {
-      throw new LLMUnavailableError(err.message || 'service unavailable');
-    }
-    throw err;
+  const params = {
+    model: config.anthropicModel,
+    max_tokens: config.anthropicMaxTokens,
+    system: systemInstruction,
+    messages,
+    output_config: { effort: config.anthropicEffort },
+  };
+  const thinking = buildThinking(config.anthropicModel);
+  if (thinking) params.thinking = thinking;
+
+  const message = await createMessage(params);
+  assertNotRefusal(message);
+
+  const text = extractText(message);
+  if (!text) {
+    throw new Error(
+      `Empty response from Claude (stop=${message.stop_reason}, output=${message.usage?.output_tokens ?? '?'})`
+    );
   }
+  if (message.stop_reason === 'max_tokens') {
+    console.warn('[llm] reply hit max_tokens; the answer is likely truncated');
+  }
+  return stripMarkdown(text);
 }
 
-export async function extractFacts({ systemInstruction, prompt }) {
-  // Reasoning models occasionally emit empty or malformed JSON. Retry the whole call
-  // a couple of times (temperature gives variation) before giving up. Rate-limit /
-  // transient errors are NOT retried here — surfaced immediately as LLMUnavailableError.
-  let lastErr;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    let data;
-    try {
-      data = await callWithRetry({
-        model: config.llmModel,
-        messages: [
-          { role: 'system', content: systemInstruction },
-          { role: 'user', content: prompt },
-        ],
-        temperature: 0.3,
-        max_tokens: 8000,
-      });
-    } catch (err) {
-      if (isRateLimit(err) || isTransient(err)) {
-        throw new LLMUnavailableError(err.message || 'service unavailable');
-      }
-      throw err;
-    }
+/**
+ * Structured JSON call. The schema is enforced by the API — the returned object
+ * is guaranteed to parse, so callers don't need their own JSON repair logic.
+ */
+export async function generateJSON({ systemInstruction, prompt, schema, maxTokens }) {
+  const model = config.anthropicUtilityModel;
+  const params = {
+    model,
+    max_tokens: maxTokens ?? config.anthropicUtilityMaxTokens,
+    system: systemInstruction,
+    messages: [{ role: 'user', content: prompt }],
+    output_config: {
+      effort: config.anthropicUtilityEffort,
+      format: { type: 'json_schema', schema },
+    },
+  };
+  const thinking = buildThinking(model);
+  if (thinking) params.thinking = thinking;
 
-    let text = data?.choices?.[0]?.message?.content;
-    if (!text || !text.trim()) {
-      const u = data?.usage;
-      lastErr = new Error(
-        `Empty extraction (finish=${data?.choices?.[0]?.finish_reason}, completion=${u?.completion_tokens}, reasoning=${u?.completion_tokens_details?.reasoning_tokens ?? '?'})`
-      );
-      continue;
-    }
-    text = stripCodeFence(text);
-    try {
-      return JSON.parse(text);
-    } catch (_) {
-      try {
-        return extractJsonObject(text);
-      } catch (e) {
-        lastErr = e;
-        // malformed JSON — retry
-      }
-    }
+  const message = await createMessage(params);
+  assertNotRefusal(message);
+
+  if (message.stop_reason === 'max_tokens') {
+    throw new Error('Structured output was truncated at max_tokens; raise ANTHROPIC_UTILITY_MAX_TOKENS');
   }
-  throw lastErr || new Error('extractFacts failed after retries');
+
+  const text = extractText(message);
+  if (!text) {
+    throw new Error(`Empty structured response from Claude (stop=${message.stop_reason})`);
+  }
+  return JSON.parse(text);
 }

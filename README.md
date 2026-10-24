@@ -1,22 +1,23 @@
 # AI Chat Telegram Bot
 
-A Telegram bot that joins a group chat as a character (currently: the Lich King from Warcraft). Listens to chat passively, responds when addressed, learns about the participants over time. **Provider-agnostic** — works with any OpenAI-compatible LLM API (default: Groq). Swap providers by changing `LLM_BASE_URL` + key.
+A Telegram bot that joins a group chat as a character. It listens passively, responds when addressed, remembers the participants over time, and can draw pictures. Powered by **Claude (Anthropic)**.
 
 ## How it works
 
 - Listens to every text message in groups where it's added (Privacy Mode must be off in @BotFather).
 - **Responds only when** the message either `@mentions` the bot or is a Telegram-reply to one of the bot's previous messages. Other messages are still saved to history for context but don't trigger a reply.
 - **Filtered out** before saving: emoji-only messages, single-character messages, slash commands, and messages from other bots.
-- Holds a rolling context window of the last ~25 messages per chat and sends them to the LLM together with a persona system prompt.
-- Once a day at `DAILY_RESET_HOUR` runs a single LLM call per chat that extracts stable facts about each user, saves them, and clears the day's messages. Facts are injected into future prompts so the bot "remembers" people across the rolling window.
+- Holds a rolling context window of the last ~25 messages per chat and sends them to Claude together with a persona system prompt.
+- Once a day at `DAILY_RESET_HOUR` runs a single structured-output call per chat that extracts stable facts about each user, saves them, and clears the day's messages. Facts are injected into future prompts so the bot "remembers" people across the rolling window.
 - All bot replies are sent silently (`disable_notification: true`) so the chat doesn't get pinged.
-- If the LLM is rate-limited or unavailable, the bot sends a single in-character snarky phrase and enters a 60-second per-chat cooldown.
+- If the API is rate-limited or unavailable, the bot sends a single in-character snarky phrase and enters a 60-second per-chat cooldown.
+- Safety refusals (`stop_reason: "refusal"`) are logged and skipped silently — no out-of-character error is posted to the chat.
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 20+ (24 LTS recommended)
 - Telegram bot token from [@BotFather](https://t.me/BotFather)
-- LLM API key — by default Groq from [console.groq.com/keys](https://console.groq.com/keys) (free tier, no card required). Any OpenAI-compatible provider works by adjusting `LLM_BASE_URL`.
+- Anthropic API key from [console.anthropic.com](https://console.anthropic.com/settings/keys)
 - MongoDB connection string (Atlas free tier, or any Mongo deployment)
 
 ## Installation
@@ -28,15 +29,24 @@ cp .env.example .env
 
 Fill in `.env`:
 
-- `TELEGRAM_BOT_TOKEN` — required, from BotFather.
-- `LLM_API_KEY` — required, key for the LLM provider (default Groq).
-- `LLM_BASE_URL` — optional, OpenAI-compatible API base URL. Defaults to `https://api.groq.com/openai/v1`. Swap to e.g. `https://openrouter.ai/api/v1` or `https://api.openai.com/v1`.
-- `LLM_MODEL` — optional, provider-specific model ID. Defaults to `llama-3.3-70b-versatile` (Groq). Free Groq alternatives: `llama-3.1-8b-instant` (much higher daily ceiling), `deepseek-r1-distill-llama-70b` (reasoning-tuned).
-- `MONGODB_URI` — required, e.g. `mongodb+srv://...`.
-- `BOT_NAME` — optional, name used in the persona prompt and logs.
-- `DAILY_RESET_HOUR` — optional, defaults to `4`.
-- `CONTEXT_WINDOW` — optional, defaults to `25`.
-- `DNS_SERVERS` — optional, comma-separated public DNS servers. Useful only if the local system DNS resolver doesn't handle SRV records (VPN/antivirus). Leave empty in production.
+- `TELEGRAM_BOT_TOKEN` — required.
+- `ANTHROPIC_API_KEY` — required.
+- `ANTHROPIC_MODEL` — main chat model, defaults to `claude-sonnet-5-5`. `claude-haiku-5-5` is ~20x cheaper if you want to test cheaply.
+- `ANTHROPIC_UTILITY_MODEL` — background calls (fact extraction, persona detection, image prompts), defaults to `claude-haiku-5-5`.
+- `ANTHROPIC_MAX_TOKENS` — defaults to `1024`. If you set `ANTHROPIC_THINKING=adaptive`, raise it: thinking tokens count toward this limit.
+- `ANTHROPIC_EFFORT` — `low` (default) keeps replies fast. Allowed: `low`, `medium`, `high`, `xhigh`, `max`.
+- `ANTHROPIC_THINKING` — `auto` by default. It picks `between_tools` for Sonnet 5.5 (which rejects `disabled` with a 400) and `disabled` for Haiku 5.5.
+- `MONGODB_URI` — required.
+- `BOT_NAME`, `DAILY_RESET_HOUR`, `CONTEXT_WINDOW`, `DNS_SERVERS` — optional.
+- `WEBHOOK_DOMAIN`, `HOST`, `PORT` — deployment options, see below.
+
+Check the key and model before starting the bot:
+
+```bash
+npm run smoke
+```
+
+It makes one chat request and one structured-JSON request and prints timing. A 401 means a bad key, a 404 means a wrong model ID, a 403 usually means the API is not available from your region.
 
 ## Setting up the bot in a group
 
@@ -51,35 +61,102 @@ npm start          # production
 npm run dev        # nodemon, restarts on file changes
 ```
 
-## Deploying (Render.com)
+## Deploying to a VPS
 
-- Use a **Background Worker** (recommended) with start command `npm start`.
-- Or use a **Web Service**: the bot binds to `PORT` when set and responds with `Bot is running` on `/` so the health check passes.
-- Set all env vars in the Render dashboard. **Don't** set `DNS_SERVERS` on Render — system DNS works there.
+The bot is a single Node process. Minimal setup on Ubuntu 24.04:
 
-## Swapping LLM provider or model
+```bash
+# as root
+adduser --system --group --home /opt/steam-bot bot
 
-Within Groq — change `LLM_MODEL` in `.env` and restart.
-To switch provider entirely — set `LLM_BASE_URL` (and new `LLM_API_KEY`) in `.env`. No code change needed since `src/llm.js` uses plain `fetch` against any OpenAI-compatible Chat Completions endpoint. Tune `temperature` and `max_tokens` in `src/llm.js` if you want different defaults.
+# as bot
+cd /opt/steam-bot
+git clone <repo> .
+npm ci --omit=dev
+cp .env.example .env && chmod 600 .env
+nano .env
+```
+
+`/etc/systemd/system/steam-bot.service`:
+
+```ini
+[Unit]
+Description=Telegram AI chat bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bot
+WorkingDirectory=/opt/steam-bot
+EnvironmentFile=/opt/steam-bot/.env
+Environment=NODE_ENV=production
+Environment=TZ=Europe/Kyiv
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl daemon-reload
+systemctl enable --now steam-bot
+journalctl -u steam-bot -f
+```
+
+- **Polling** (no domain needed): leave `WEBHOOK_DOMAIN` empty. Do not set `PORT` unless you want the health endpoint.
+- **Webhook** (recommended with a domain): set `WEBHOOK_DOMAIN=https://bot.example.com`, `PORT=3000`, keep `HOST=127.0.0.1`, and put Caddy in front:
+
+```caddyfile
+bot.example.com {
+    reverse_proxy 127.0.0.1:3000
+}
+```
+
+- Keep `TZ` in the unit file — the daily extractor uses local time. Without it, facts will be collected at an unexpected hour.
+- Add the VPS IP to the MongoDB Atlas IP allowlist.
+- Only one instance may poll a bot token. Stop the old deployment before starting the new one.
+
+## Models, costs, and tuning
+
+Claude Sonnet 5.5 pricing is $2 / $10 per million input / output tokens. A typical reply in this bot (system prompt + 25-message window ≈ 2.5K input, ~150 output) costs about **$0.0065**, so ~$6.5 per 1000 replies. Haiku 5.5 is ~20x cheaper.
+
+Sonnet 5.5 notes:
+
+- It rejects `temperature`, `top_p`, and `top_k` with a 400 — `src/llm.js` doesn't send them.
+- Thinking is on by default. `thinking: {type: "between_tools"}` turns off up-front thinking (accepted at `low`/`medium`/`high` effort).
+- `output_config.effort` controls how much work the model does. For chat, `low` is the right default.
+
+Switching models is an env change: set `ANTHROPIC_MODEL` and restart. `ANTHROPIC_THINKING=auto` adapts to the model. If you switch to Sonnet 5.5 from an older model, re-run `npm run smoke` — the API returns clear 400s for unsupported parameters.
 
 ## Project structure
 
 ```
 src/
   index.js               — entry point: env validation, Mongo connect, bot launch, scheduler
-  config.js              — central env-var parsing and validation
+  config.js              — env parsing, thinking/effort resolution, validation
   bot.js                 — Telegram message handler: filter → addressed-check → load context → LLM → reply
-  llm.js                 — provider-agnostic LLM wrapper (fetch-based, OpenAI-compatible), rate-limit detection, markdown stripping
+  llm.js                 — Claude client, error mapping (429/529/5xx/refusals), markdown stripping
+  schemas.js             — JSON Schemas for structured outputs (facts, persona, image prompt)
   prompts.js             — persona prompt template, fact-extraction prompt, fallback phrases
   storage.js             — Mongoose CRUD for messages and facts
   scheduler.js           — daily fact extraction + context cleanup
   models/
     ChatMessage.js       — rolling chat history
     UserFact.js          — per-user extracted facts (capped at 50 per user per chat)
+    ChatPersona.js       — per-chat custom persona
+scripts/
+  smoke.js               — one chat + one JSON request, for verifying the API key/model
+  extract-now.js         — run daily fact extraction immediately instead of waiting
 ```
 
 ## Notes
 
-- The persona currently embodies the Lich King (Arthas Menethil / Ner'zhul). Persona text and rate-limit fallback phrases live in `src/prompts.js` — edit there to change character.
+- Persona text and rate-limit fallback phrases live in `src/prompts.js` — edit there to change character.
 - Persona has guardrails: no personal attacks by identity, no real-world politics/religion, no real-world NSFW/violence. Profanity is allowed when natural (target audience: adult chat).
-- No web search / grounding — the LLM uses its own knowledge cutoff. For very recent events the bot will admit it doesn't know.
+- No web search / grounding — Claude uses its own knowledge cutoff.
+- Utility calls use structured outputs (`output_config.format`), so fact extraction and persona detection no longer depend on parsing JSON out of free-form text.
