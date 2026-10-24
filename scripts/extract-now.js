@@ -1,5 +1,5 @@
-import mongoose from 'mongoose';
 import { config, validateConfig } from '../src/config.js';
+import { connect, close } from '../src/db.js';
 import { extractFactsForChat } from '../src/scheduler.js';
 import * as storage from '../src/storage.js';
 
@@ -17,8 +17,8 @@ if (arg !== undefined && !Number.isFinite(requestedChatId)) {
   process.exit(1);
 }
 
-await mongoose.connect(config.mongodbUri);
-console.log('MongoDB connected');
+await connect();
+console.log('Postgres connected');
 
 try {
   const chatIds =
@@ -36,5 +36,5 @@ try {
     console.log(`[extract] chat ${chatId} done`);
   }
 } finally {
-  await mongoose.disconnect();
+  await close();
 }

@@ -1,0 +1,33 @@
+name: steam-bot
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-steam_bot}
+      POSTGRES_USER: ${POSTGRES_USER:-steam_bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      # Data lives outside the container so a rebuild never touches it.
+      - /opt/steam-bot-data/pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # No published ports: only the bot reaches it, over the compose network.
+
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Credentials have one source of truth (.env), the URL is derived from it.
+      DATABASE_URL: postgres://${POSTGRES_USER:-steam_bot}:${POSTGRES_PASSWORD:?}@postgres:5432/${POSTGRES_DB:-steam_bot}
+      TZ: ${TZ:-Europe/Kyiv}
+    depends_on:
+      postgres:
+        condition: service_healthy

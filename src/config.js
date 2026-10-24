@@ -38,7 +38,7 @@ export const config = {
   // auto: pick the right mode for the model (Sonnet 5.5 rejects "disabled").
   anthropicThinking: thinkingMode,
 
-  mongodbUri: env.MONGODB_URI || '',
+  databaseUrl: env.DATABASE_URL || '',
   botName: env.BOT_NAME || 'Бот',
   dailyResetHour: Math.min(23, Math.max(0, intOrDefault(env.DAILY_RESET_HOUR, 4))),
   contextWindow: Math.min(200, Math.max(5, intOrDefault(env.CONTEXT_WINDOW, 25))),
@@ -57,7 +57,7 @@ export function validateConfig() {
   const missing = [];
   if (!config.telegramBotToken) missing.push('TELEGRAM_BOT_TOKEN');
   if (!config.anthropicApiKey) missing.push('ANTHROPIC_API_KEY');
-  if (!config.mongodbUri) missing.push('MONGODB_URI');
+  if (!config.databaseUrl) missing.push('DATABASE_URL');
   if (missing.length) {
     throw new Error(`Missing required env vars: ${missing.join(', ')}`);
   }

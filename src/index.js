@@ -1,7 +1,7 @@
 import { createServer } from 'http';
 import dns from 'dns';
-import mongoose from 'mongoose';
 import { config, validateConfig } from './config.js';
+import { connect, close } from './db.js';
 import { createBot } from './bot.js';
 import { startScheduler, stopScheduler } from './scheduler.js';
 
@@ -18,10 +18,10 @@ if (config.dnsServers.length > 0) {
 }
 
 try {
-  await mongoose.connect(config.mongodbUri);
-  console.log('MongoDB connected');
+  await connect();
+  console.log('Postgres connected');
 } catch (err) {
-  console.error('MongoDB connection failed:', err.message);
+  console.error('Postgres connection failed:', err.message);
   process.exit(1);
 }
 
@@ -101,7 +101,7 @@ function shutdown(signal) {
   console.log(`Received ${signal}, shutting down…`);
   stopScheduler();
   bot.stop(signal);
-  mongoose.disconnect().catch(() => {});
+  close().catch(() => {});
 }
 
 process.once('SIGINT', () => shutdown('SIGINT'));

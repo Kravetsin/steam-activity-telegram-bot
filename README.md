@@ -18,7 +18,7 @@ A Telegram bot that joins a group chat as a character. It listens passively, res
 - Node.js 20+ (24 LTS recommended)
 - Telegram bot token from [@BotFather](https://t.me/BotFather)
 - Anthropic API key from [console.anthropic.com](https://console.anthropic.com/settings/keys)
-- MongoDB connection string (Atlas free tier, or any Mongo deployment)
+- PostgreSQL connection string, e.g. `postgres://user:pass@host:5432/db`. The schema is created on first boot.
 
 ## Installation
 
@@ -36,7 +36,7 @@ Fill in `.env`:
 - `ANTHROPIC_MAX_TOKENS` — defaults to `1024`. If you set `ANTHROPIC_THINKING=adaptive`, raise it: thinking tokens count toward this limit.
 - `ANTHROPIC_EFFORT` — `low` (default) keeps replies fast. Allowed: `low`, `medium`, `high`, `xhigh`, `max`.
 - `ANTHROPIC_THINKING` — `auto` by default. It picks `between_tools` for Sonnet 5.5 (which rejects `disabled` with a 400) and `disabled` for Haiku 5.5.
-- `MONGODB_URI` — required.
+- `DATABASE_URL` — required.
 - `BOT_NAME`, `DAILY_RESET_HOUR`, `CONTEXT_WINDOW`, `DNS_SERVERS` — optional.
 - `WEBHOOK_DOMAIN`, `HOST`, `PORT` — deployment options, see below.
 
@@ -63,49 +63,49 @@ npm run dev        # nodemon, restarts on file changes
 
 ## Deploying to a VPS
 
-The bot is a single Node process. Minimal setup on Ubuntu 24.04:
+Runs in Docker: one container for the bot, one for PostgreSQL. Setup on a fresh Ubuntu 22.04/24.04 VPS:
 
 ```bash
 # as root
-adduser --system --group --home /opt/steam-bot bot
-
-# as bot
+git clone <repo> /opt/steam-bot
 cd /opt/steam-bot
-git clone <repo> .
-npm ci --omit=dev
-cp .env.example .env && chmod 600 .env
-nano .env
+
+cp .env.example .env
+chmod 600 .env
+
+# URL-safe password, no escaping headaches in the connection string
+sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(openssl rand -hex 24)|" .env
+nano .env      # TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY
+
+chmod +x redeploy.sh backup-db.sh
+./redeploy.sh
+docker compose logs -f bot
 ```
 
-`/etc/systemd/system/steam-bot.service`:
+`compose.yml` keeps Postgres unpublished (reachable only over the compose network), stores data in
+`/opt/steam-bot-data/pg`, and derives `DATABASE_URL` from `POSTGRES_*` — credentials live in one place.
+The schema is created on first boot; there are no migrations to run.
 
-```ini
-[Unit]
-Description=Telegram AI chat bot
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=bot
-WorkingDirectory=/opt/steam-bot
-EnvironmentFile=/opt/steam-bot/.env
-Environment=NODE_ENV=production
-Environment=TZ=Europe/Kyiv
-ExecStart=/usr/bin/node src/index.js
-Restart=always
-RestartSec=5
-NoNewPrivileges=true
-PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
-```
+Nightly backups (14 days retained):
 
 ```bash
-systemctl daemon-reload
-systemctl enable --now steam-bot
-journalctl -u steam-bot -f
+echo '15 4 * * * /opt/steam-bot/backup-db.sh >> /var/log/steam-bot-backup.log 2>&1' | crontab -
+```
+
+Everyday commands:
+
+```bash
+docker compose logs -f bot          # logs
+docker compose restart bot          # after editing .env
+docker compose exec bot npm run extract:now   # run fact extraction immediately
+./redeploy.sh                       # rebuild after a code change
+```
+
+Restore from a backup:
+
+```bash
+gunzip -c /opt/steam-bot-data/backups/steam_bot-<stamp>.sql.gz \
+  | docker compose exec -T postgres psql -U steam_bot -d steam_bot
 ```
 
 - **Polling** (no domain needed): leave `WEBHOOK_DOMAIN` empty. Do not set `PORT` unless you want the health endpoint.
@@ -117,8 +117,8 @@ bot.example.com {
 }
 ```
 
-- Keep `TZ` in the unit file — the daily extractor uses local time. Without it, facts will be collected at an unexpected hour.
-- Add the VPS IP to the MongoDB Atlas IP allowlist.
+- `TZ` in `compose.yml` defaults to `Europe/Kyiv` — the daily extractor uses local time. Without it, facts get collected at an unexpected hour.
+- Postgres data and backups live in `/opt/steam-bot-data` — outside the build context, so redeploys never touch them.
 - Only one instance may poll a bot token. Stop the old deployment before starting the new one.
 
 ## Models, costs, and tuning
@@ -137,18 +137,15 @@ Switching models is an env change: set `ANTHROPIC_MODEL` and restart. `ANTHROPIC
 
 ```
 src/
-  index.js               — entry point: env validation, Mongo connect, bot launch, scheduler
+  index.js               — entry point: env validation, Postgres connect, bot launch, scheduler
   config.js              — env parsing, thinking/effort resolution, validation
   bot.js                 — Telegram message handler: filter → addressed-check → load context → LLM → reply
   llm.js                 — Claude client, error mapping (429/529/5xx/refusals), markdown stripping
   schemas.js             — JSON Schemas for structured outputs (facts, persona, image prompt)
   prompts.js             — persona prompt template, fact-extraction prompt, fallback phrases
-  storage.js             — Mongoose CRUD for messages and facts
+  db.js                  — Postgres pool, bigint parsing, schema bootstrap
+  storage.js             — SQL queries for messages, facts, and personas
   scheduler.js           — daily fact extraction + context cleanup
-  models/
-    ChatMessage.js       — rolling chat history
-    UserFact.js          — per-user extracted facts (capped at 50 per user per chat)
-    ChatPersona.js       — per-chat custom persona
 scripts/
   smoke.js               — one chat + one JSON request, for verifying the API key/model
   extract-now.js         — run daily fact extraction immediately instead of waiting
