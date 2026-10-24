@@ -13,6 +13,15 @@ function oneOf(value, allowed, fallback) {
   return allowed.includes(v) ? v : fallback;
 }
 
+// Telegram user ids are positive; anything unparsable is dropped rather than
+// silently becoming 0 or NaN.
+function idList(value) {
+  return String(value || '')
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
+}
+
 const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const THINKING_MODES = ['auto', 'disabled', 'between_tools', 'adaptive', 'off'];
 
@@ -40,6 +49,8 @@ export const config = {
 
   databaseUrl: env.DATABASE_URL || '',
   botName: env.BOT_NAME || 'Бот',
+  // Users allowed to talk to the bot in a private chat. Empty = DMs ignored.
+  dmAllowedUserIds: idList(env.TELEGRAM_DM_ALLOWED_IDS),
   dailyResetHour: Math.min(23, Math.max(0, intOrDefault(env.DAILY_RESET_HOUR, 4))),
   contextWindow: Math.min(200, Math.max(5, intOrDefault(env.CONTEXT_WINDOW, 25))),
 

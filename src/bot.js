@@ -113,10 +113,26 @@ function buildMessages(history) {
 
 export function createBot() {
   const bot = new Telegraf(config.telegramBotToken);
+  const dmAllowed = new Set(config.dmAllowedUserIds);
+
+  // Registered before the text handler: Telegraf stops at the first middleware that
+  // matches, and /start is otherwise swallowed by shouldSkip().
+  bot.start(async (ctx) => {
+    if (ctx.chat?.type !== 'private') return;
+    if (!dmAllowed.has(ctx.from?.id)) return;
+    await ctx.reply(
+      `Привет. Я ${config.botName}. Пиши — отвечу. В группе зови через @${ctx.botInfo.username}.`
+    );
+  });
 
   bot.on('text', async (ctx) => {
     const chat = ctx.chat;
-    if (!chat || (chat.type !== 'group' && chat.type !== 'supergroup')) return;
+    if (!chat) return;
+
+    const isPrivate = chat.type === 'private';
+    if (!isPrivate && chat.type !== 'group' && chat.type !== 'supergroup') return;
+    // Private chats are open only to the whitelist in TELEGRAM_DM_ALLOWED_IDS.
+    if (isPrivate && !dmAllowed.has(ctx.from?.id)) return;
 
     const from = ctx.from;
     if (!from || from.is_bot) return;
@@ -145,7 +161,8 @@ export function createBot() {
       return;
     }
 
-    if (!isBotAddressed(ctx.message, ctx.botInfo)) return;
+    // In a private chat there is nobody else to address: every message is for the bot.
+    if (!isPrivate && !isBotAddressed(ctx.message, ctx.botInfo)) return;
 
     // ── Persona control via natural language ──
     // Reset: cheap regex, no LLM call.
