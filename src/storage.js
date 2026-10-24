@@ -2,8 +2,8 @@ import { pool } from './db.js';
 
 const MAX_FACTS_PER_USER = 50;
 
-// Row shape: keep SQL column names aliased to the old camelCase fields, so bot.js /
-// scheduler.js / persona.js don't have to change.
+// Row shape: keep SQL column names aliased to camelCase, so bot.js / scheduler.js
+// don't have to know about the database.
 const MESSAGE_COLUMNS = `
   chat_id          AS "chatId",
   telegram_user_id AS "telegramUserId",
@@ -12,31 +12,6 @@ const MESSAGE_COLUMNS = `
   text,
   ts
 `;
-
-export async function getChatPersona(chatId) {
-  const { rows } = await pool.query(
-    'SELECT persona FROM chat_personas WHERE chat_id = $1',
-    [chatId]
-  );
-  return rows[0]?.persona || null;
-}
-
-export async function setChatPersona(chatId, persona, setByUserId, setByName) {
-  await pool.query(
-    `INSERT INTO chat_personas (chat_id, persona, set_by_user_id, set_by_name, updated_at)
-     VALUES ($1, $2, $3, $4, now())
-     ON CONFLICT (chat_id) DO UPDATE SET
-       persona        = EXCLUDED.persona,
-       set_by_user_id = EXCLUDED.set_by_user_id,
-       set_by_name    = EXCLUDED.set_by_name,
-       updated_at     = now()`,
-    [chatId, persona, setByUserId ?? null, setByName ?? '']
-  );
-}
-
-export async function clearChatPersona(chatId) {
-  await pool.query('DELETE FROM chat_personas WHERE chat_id = $1', [chatId]);
-}
 
 export async function appendChatMessage({ chatId, telegramUserId, displayName, role, text }) {
   await pool.query(

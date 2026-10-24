@@ -7,7 +7,7 @@ const POLLINATIONS = 'https://image.pollinations.ai/prompt';
 // the model picks subject-appropriate style itself (photo for objects, painting for scenes).
 const FALLBACK_STYLE_SUFFIX = ', detailed, 4k, sharp focus';
 
-// Persona-neutral captions sent with the image. Random pick.
+// Captions sent with the image. Random pick.
 const CAPTIONS = [
   'Готово.',
   'Вот, держи.',

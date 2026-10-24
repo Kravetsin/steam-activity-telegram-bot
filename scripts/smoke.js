@@ -1,6 +1,6 @@
 import { config, validateConfig, thinkingForModel } from '../src/config.js';
 import { generateReply, generateJSON } from '../src/llm.js';
-import { PERSONA_SCHEMA } from '../src/schemas.js';
+import { IMAGE_PROMPT_SCHEMA } from '../src/schemas.js';
 
 try {
   validateConfig();
@@ -38,9 +38,9 @@ try {
   const started = Date.now();
   const json = await generateJSON({
     systemInstruction:
-      'Определи, просит ли пользователь сменить роль/персонажа. Верни isPersonaChange и persona.',
-    prompt: 'стань пиратом',
-    schema: PERSONA_SCHEMA,
+      'Переведи запрос картинки на английский и верни prompt и negative_prompt.',
+    prompt: 'кот в скафандре на Марсе',
+    schema: IMAGE_PROMPT_SCHEMA,
   });
   console.log(`OK   json  (${Date.now() - started} ms):`, JSON.stringify(json));
 } catch (err) {

@@ -70,23 +70,9 @@ function buildThinking(model) {
   return thinkingForModel(model, config.anthropicThinking);
 }
 
-function stripMarkdown(text) {
-  let t = text;
-  t = t.replace(/^\s*[*\-+]\s+/gm, '');
-  t = t.replace(/^\s*\d+\.\s+/gm, '');
-  t = t.replace(/^#{1,6}\s+/gm, '');
-  t = t.replace(/\*\*(.+?)\*\*/g, '$1');
-  t = t.replace(/__(.+?)__/g, '$1');
-  t = t.replace(/(^|[^*])\*(?!\*)([^*\n]+?)\*(?!\*)/g, '$1$2');
-  t = t.replace(/(^|[^_])_(?!_)([^_\n]+?)_(?!_)/g, '$1$2');
-  t = t.replace(/`([^`]+)`/g, '$1');
-  t = t.replace(/\[(\d+)\]/g, '');
-  t = t.replace(/\n{3,}/g, '\n\n');
-  return t.trim();
-}
-
 /**
- * Free-form chat reply. Returns plain text with light markdown cleanup.
+ * Free-form chat reply. Returns the model's text as-is: formatting is handled by
+ * format.js when the message is sent.
  */
 export async function generateReply({ systemInstruction, messages }) {
   const params = {
@@ -111,7 +97,7 @@ export async function generateReply({ systemInstruction, messages }) {
   if (message.stop_reason === 'max_tokens') {
     console.warn('[llm] reply hit max_tokens; the answer is likely truncated');
   }
-  return stripMarkdown(text);
+  return text;
 }
 
 /**

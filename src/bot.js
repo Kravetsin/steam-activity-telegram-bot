@@ -3,13 +3,8 @@ import { config } from './config.js';
 import * as storage from './storage.js';
 import * as llm from './llm.js';
 import * as prompts from './prompts.js';
-import {
-  buildImageUrl,
-  pickImageCaption,
-  detectImageRequest,
-  translateImagePrompt,
-} from './images.js';
-import { detectReset, looksLikePersonaRequest, extractPersona } from './persona.js';
+import { detectImageRequest, translateImagePrompt, buildImageUrl, pickImageCaption } from './images.js';
+import { toTelegramHtml, toPlainText } from './format.js';
 
 const EMOJI_RE = /[\p{Extended_Pictographic}\p{Emoji_Modifier}‍️]/gu;
 
@@ -75,18 +70,27 @@ function displayName(from) {
 function cleanBotResponse(text) {
   if (!text) return '';
   let t = text.trim();
-  // Strip leading "Name:" prefix if model accidentally added one
-  // (matches Latin/Cyrillic word + optional spaces + ":" + space at the start)
-  t = t.replace(/^[A-Za-zА-Яа-яЁё][\wА-Яа-яЁё\-]{0,30}\s*:\s*/, '');
-  // Strip leading parenthetical "actions" reasoning models love to add: "(Хмыкнул)", "(Спокойно зыркает...)"
-  t = t.replace(/^\(\s*[^)]{1,100}\s*\)\s*/, '');
+  // Strip a leading "Name:" prefix, but only for the bot's own name — a reply that
+  // legitimately starts with "Итог: ..." must keep it.
+  const escaped = config.botName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  t = t.replace(new RegExp(`^${escaped}\\s*:\\s*`, 'i'), '');
   // Strip leading <think>...</think> blocks some reasoning models leak through
   t = t.replace(/^<think>[\s\S]*?<\/think>\s*/i, '');
-  // Strip leading italics-as-action: "*вздыхает*" at the start
-  t = t.replace(/^\*[^*\n]{1,80}\*\s*/, '');
-  // Strip leading quotes that sometimes wrap the response
-  t = t.replace(/^[«"']+\s*/, '').replace(/\s*[»"']+$/, '');
   return t.trim();
+}
+
+/**
+ * Send with Telegram HTML markup. If Telegram rejects the entities anyway, resend the
+ * same text unformatted rather than losing the answer.
+ */
+async function replyFormatted(ctx, text) {
+  const html = toTelegramHtml(text);
+  try {
+    await ctx.reply(html, { parse_mode: 'HTML', disable_notification: true });
+  } catch (err) {
+    console.error('HTML reply rejected, sending plain text:', err.message);
+    await ctx.reply(toPlainText(html), { disable_notification: true });
+  }
 }
 
 function buildMessages(history) {
@@ -164,73 +168,6 @@ export function createBot() {
     // In a private chat there is nobody else to address: every message is for the bot.
     if (!isPrivate && !isBotAddressed(ctx.message, ctx.botInfo)) return;
 
-    // ── Persona control via natural language ──
-    // Reset: cheap regex, no LLM call.
-    if (detectReset(text)) {
-      try {
-        await storage.clearChatPersona(chatId);
-        const confirm = 'Окей, снова без роли. Кем мне быть — решайте сами.';
-        await ctx.reply(confirm, { disable_notification: true });
-        await storage.appendChatMessage({
-          chatId,
-          telegramUserId: ctx.botInfo?.id ?? 0,
-          displayName: config.botName,
-          role: 'assistant',
-          text: confirm,
-        });
-      } catch (err) {
-        console.error('Persona reset failed:', err.message);
-      }
-      return;
-    }
-
-    // Set: cheap gate, then LLM confirms + extracts (skips while rate-limited).
-    if (looksLikePersonaRequest(text) && !isInCooldown(chatId)) {
-      let extracted;
-      try {
-        extracted = await extractPersona(text);
-      } catch (_) {
-        extracted = { isPersonaChange: false };
-      }
-      if (extracted.isPersonaChange) {
-        try {
-          await storage.setChatPersona(chatId, extracted.persona, userId, name);
-          console.log(
-            `[pid=${process.pid}] persona set in chat ${chatId} by ${name}: "${extracted.persona.slice(0, 80)}"`
-          );
-          ctx.sendChatAction('typing').catch(() => {});
-          const introSystem = prompts.buildPersonaPrompt([], extracted.persona);
-          let intro;
-          try {
-            intro = await llm.generateReply({
-              systemInstruction: introSystem,
-              messages: [
-                {
-                  role: 'user',
-                  content: `${name}: (ты только что вошёл в этот образ — коротко, одной-двумя фразами поздоровайся с чатом в характере)`,
-                },
-              ],
-            });
-          } catch (_) {
-            intro = 'Готово. Я в образе.';
-          }
-          const cleanedIntro = cleanBotResponse(intro.replace(/<image>[\s\S]*?<\/image>/gi, '')) || 'Готово. Я в образе.';
-          await ctx.reply(cleanedIntro, { disable_notification: true });
-          await storage.appendChatMessage({
-            chatId,
-            telegramUserId: ctx.botInfo?.id ?? 0,
-            displayName: config.botName,
-            role: 'assistant',
-            text: cleanedIntro,
-          });
-        } catch (err) {
-          console.error('Persona set failed:', err.message);
-        }
-        return;
-      }
-      // not a real persona change — fall through to normal handling
-    }
-
     // Image-generation shortcut: detect "нарисуй ..." trigger.
     // Uses LLM to translate Russian → detailed English FLUX prompt + negative_prompt.
     const rawImagePrompt = detectImageRequest(text);
@@ -262,12 +199,10 @@ export function createBot() {
 
     let history;
     let userFacts;
-    let customPersona;
     try {
-      [history, userFacts, customPersona] = await Promise.all([
+      [history, userFacts] = await Promise.all([
         storage.getRecentChatMessages(chatId, config.contextWindow),
         storage.getChatUserFacts(chatId),
-        storage.getChatPersona(chatId),
       ]);
     } catch (err) {
       console.error('Failed to load context:', err.message);
@@ -277,7 +212,7 @@ export function createBot() {
     const messages = buildMessages(history);
     if (messages.length === 0) return;
 
-    const persona = prompts.buildPersonaPrompt(userFacts, customPersona);
+    const system = prompts.buildSystemPrompt(userFacts);
 
     try {
       ctx.sendChatAction('typing').catch(() => {});
@@ -287,7 +222,7 @@ export function createBot() {
 
     let response;
     try {
-      response = await llm.generateReply({ systemInstruction: persona, messages });
+      response = await llm.generateReply({ systemInstruction: system, messages });
     } catch (err) {
       if (err instanceof llm.LLMUnavailableError) {
         const shouldNotify = markCooldownReturnShouldNotify(chatId);
@@ -333,7 +268,7 @@ export function createBot() {
 
     if (cleaned.length >= 2) {
       try {
-        await ctx.reply(cleaned, { disable_notification: true });
+        await replyFormatted(ctx, cleaned);
       } catch (err) {
         console.error('Failed to send reply:', err.message);
       }

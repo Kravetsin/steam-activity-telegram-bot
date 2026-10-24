@@ -22,16 +22,6 @@ export const FACTS_SCHEMA = {
   additionalProperties: false,
 };
 
-export const PERSONA_SCHEMA = {
-  type: 'object',
-  properties: {
-    isPersonaChange: { type: 'boolean' },
-    persona: { type: 'string' },
-  },
-  required: ['isPersonaChange', 'persona'],
-  additionalProperties: false,
-};
-
 export const IMAGE_PROMPT_SCHEMA = {
   type: 'object',
   properties: {

@@ -18,7 +18,6 @@ function check(label, ok) {
 async function cleanup() {
   await pool.query('DELETE FROM chat_messages WHERE chat_id = $1', [CHAT_ID]);
   await pool.query('DELETE FROM user_facts WHERE chat_id = $1', [CHAT_ID]);
-  await pool.query('DELETE FROM chat_personas WHERE chat_id = $1', [CHAT_ID]);
 }
 
 await connect();
@@ -44,14 +43,6 @@ try {
 
   const upTo = await storage.getMessagesUpTo(CHAT_ID, new Date(Date.now() + 60_000));
   check('getMessagesUpTo returns the full history', upTo.length === 3);
-
-  // ── persona ──
-  await storage.setChatPersona(CHAT_ID, 'строгий критик', USER_ID, 'Ihor');
-  check('persona stored', (await storage.getChatPersona(CHAT_ID)) === 'строгий критик');
-  await storage.setChatPersona(CHAT_ID, 'добрый критик', USER_ID, 'Ihor');
-  check('persona upserts instead of duplicating', (await storage.getChatPersona(CHAT_ID)) === 'добрый критик');
-  await storage.clearChatPersona(CHAT_ID);
-  check('persona cleared', (await storage.getChatPersona(CHAT_ID)) === null);
 
   // ── facts ──
   await storage.appendUserFacts({

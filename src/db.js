@@ -32,14 +32,6 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 CREATE INDEX IF NOT EXISTS chat_messages_chat_ts_idx
   ON chat_messages (chat_id, ts);
 
-CREATE TABLE IF NOT EXISTS chat_personas (
-  chat_id        bigint PRIMARY KEY,
-  persona        text NOT NULL,
-  set_by_user_id bigint,
-  set_by_name    text NOT NULL DEFAULT '',
-  updated_at     timestamptz NOT NULL DEFAULT now()
-);
-
 CREATE TABLE IF NOT EXISTS user_facts (
   chat_id          bigint NOT NULL,
   telegram_user_id bigint NOT NULL,

@@ -1,17 +1,20 @@
 # AI Chat Telegram Bot
 
-A Telegram bot that joins a group chat as a character. It listens passively, responds when addressed, remembers the participants over time, and can draw pictures. Powered by **Claude (Anthropic)**.
+A Telegram bot that sits in a group chat as a general-purpose assistant. It listens passively, answers when addressed, remembers the participants over time, and can draw pictures. Powered by **Claude (Anthropic)**.
 
 ## How it works
 
 - Listens to every text message in groups where it's added (Privacy Mode must be off in @BotFather).
-- **Responds only when** the message either `@mentions` the bot or is a Telegram-reply to one of the bot's previous messages. Other messages are still saved to history for context but don't trigger a reply.
-- **Filtered out** before saving: emoji-only messages, single-character messages, slash commands, and messages from other bots.
-- Holds a rolling context window of the last ~25 messages per chat and sends them to Claude together with a persona system prompt.
+- **In a group it responds only when** the message either `@mentions` the bot or is a Telegram-reply to one of the bot's previous messages. Other messages are still saved to history for context but don't trigger a reply.
+- **In a private chat** every message is a message to the bot — no mention needed. DMs are open only to the user ids listed in `TELEGRAM_DM_ALLOWED_IDS`; everyone else is ignored silently.
+- **Filtered out** before saving: emoji-only messages, single-character messages, slash commands, and messages from other bots. `/start` in a private chat gets a short greeting instead.
+- Holds a rolling context window of the last ~25 messages per chat and sends them to Claude together with an assistant system prompt. Each chat (group or DM) has its own history and facts.
 - Once a day at `DAILY_RESET_HOUR` runs a single structured-output call per chat that extracts stable facts about each user, saves them, and clears the day's messages. Facts are injected into future prompts so the bot "remembers" people across the rolling window.
+- Replies are formatted with Telegram HTML (`<b>`, `<i>`, `<code>`, `<pre>`, links). `src/format.js` whitelists tags, escapes everything else, and falls back to plain text if Telegram still rejects the markup.
+- Replies in the language of the person it's answering.
 - All bot replies are sent silently (`disable_notification: true`) so the chat doesn't get pinged.
-- If the API is rate-limited or unavailable, the bot sends a single in-character snarky phrase and enters a 60-second per-chat cooldown.
-- Safety refusals (`stop_reason: "refusal"`) are logged and skipped silently — no out-of-character error is posted to the chat.
+- If the API is rate-limited or unavailable, the bot sends a single short phrase and enters a 60-second per-chat cooldown.
+- Safety refusals (`stop_reason: "refusal"`) are logged and skipped silently — no error is posted to the chat.
 
 ## Requirements
 
@@ -32,12 +35,14 @@ Fill in `.env`:
 - `TELEGRAM_BOT_TOKEN` — required.
 - `ANTHROPIC_API_KEY` — required.
 - `ANTHROPIC_MODEL` — main chat model, defaults to `claude-sonnet-5-5`. `claude-haiku-5-5` is ~20x cheaper if you want to test cheaply.
-- `ANTHROPIC_UTILITY_MODEL` — background calls (fact extraction, persona detection, image prompts), defaults to `claude-haiku-5-5`.
+- `ANTHROPIC_UTILITY_MODEL` — background calls (fact extraction, image prompts), defaults to `claude-haiku-5-5`.
 - `ANTHROPIC_MAX_TOKENS` — defaults to `1024`. If you set `ANTHROPIC_THINKING=adaptive`, raise it: thinking tokens count toward this limit.
 - `ANTHROPIC_EFFORT` — `low` (default) keeps replies fast. Allowed: `low`, `medium`, `high`, `xhigh`, `max`.
 - `ANTHROPIC_THINKING` — `auto` by default. It picks `between_tools` for Sonnet 5.5 (which rejects `disabled` with a 400) and `disabled` for Haiku 5.5.
 - `DATABASE_URL` — required.
-- `BOT_NAME`, `DAILY_RESET_HOUR`, `CONTEXT_WINDOW`, `DNS_SERVERS` — optional.
+- `BOT_NAME` — display name used in prompts and the `/start` greeting.
+- `TELEGRAM_DM_ALLOWED_IDS` — comma-separated Telegram user ids allowed to talk to the bot in a private chat. Empty or unset means DMs are ignored. Get your id from [@userinfobot](https://t.me/userinfobot).
+- `DAILY_RESET_HOUR`, `CONTEXT_WINDOW`, `DNS_SERVERS` — optional.
 - `WEBHOOK_DOMAIN`, `HOST`, `PORT` — deployment options, see below.
 
 Check the key and model before starting the bot:
@@ -53,6 +58,16 @@ It makes one chat request and one structured-JSON request and prints timing. A 4
 1. **Disable Privacy Mode** in @BotFather: `/mybots` → choose bot → **Bot Settings → Group Privacy → Turn off**. Without this, the bot only sees `@mentions` and explicit replies, so it can't build chat history.
 2. Add the bot to a group.
 3. If the bot was already in the group when you toggled privacy mode, remove it and add it back so the change takes effect.
+
+## Talking to the bot in a private chat
+
+Private chats are opt-in and whitelisted:
+
+1. Get your Telegram user id from [@userinfobot](https://t.me/userinfobot).
+2. Put it in `TELEGRAM_DM_ALLOWED_IDS` (comma-separated for several people) and restart the container with `docker compose up -d bot` — `restart` does not re-read `env_file`.
+3. Open the bot, press **Start**, then just write. No `@mention` needed.
+
+Messages from anyone not on the list are ignored without a reply. A DM has its own history and its own extracted facts, separate from any group — the bot does not carry context across chats.
 
 ## Running
 
@@ -96,7 +111,7 @@ Everyday commands:
 
 ```bash
 docker compose logs -f bot          # logs
-docker compose restart bot          # after editing .env
+docker compose up -d bot            # after editing .env (restart does not re-read env_file)
 docker compose exec bot npm run extract:now   # run fact extraction immediately
 ./update.sh                         # git pull + rebuild
 ./redeploy.sh                       # rebuild without pulling
@@ -141,11 +156,12 @@ src/
   index.js               — entry point: env validation, Postgres connect, bot launch, scheduler
   config.js              — env parsing, thinking/effort resolution, validation
   bot.js                 — Telegram message handler: filter → addressed-check → load context → LLM → reply
-  llm.js                 — Claude client, error mapping (429/529/5xx/refusals), markdown stripping
-  schemas.js             — JSON Schemas for structured outputs (facts, persona, image prompt)
-  prompts.js             — persona prompt template, fact-extraction prompt, fallback phrases
+  format.js              — Telegram HTML sanitizer: whitelist tags, escape the rest, plain-text fallback
+  llm.js                 — Claude client, error mapping (429/529/5xx/refusals)
+  schemas.js             — JSON Schemas for structured outputs (facts, image prompt)
+  prompts.js             — assistant system prompt, fact-extraction prompt, fallback phrases
   db.js                  — Postgres pool, bigint parsing, schema bootstrap
-  storage.js             — SQL queries for messages, facts, and personas
+  storage.js             — SQL queries for messages and facts
   scheduler.js           — daily fact extraction + context cleanup
 scripts/
   smoke.js               — one chat + one JSON request, for verifying the API key/model
@@ -154,7 +170,7 @@ scripts/
 
 ## Notes
 
-- Persona text and rate-limit fallback phrases live in `src/prompts.js` — edit there to change character.
-- Persona has guardrails: no personal attacks by identity, no real-world politics/religion, no real-world NSFW/violence. Profanity is allowed when natural (target audience: adult chat).
+- Behaviour lives in the system prompt in `src/prompts.js` — edit there to change tone, length, or formatting rules.
+- Guardrails: no personal attacks by identity, no real-world politics/religion, no real-world NSFW/violence. Profanity is allowed when natural (target audience: adult chat).
 - No web search / grounding — Claude uses its own knowledge cutoff.
-- Utility calls use structured outputs (`output_config.format`), so fact extraction and persona detection no longer depend on parsing JSON out of free-form text.
+- Utility calls use structured outputs (`output_config.format`), so fact extraction and image-prompt translation don't depend on parsing JSON out of free-form text.

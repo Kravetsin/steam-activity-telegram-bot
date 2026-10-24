@@ -34,7 +34,7 @@ export const config = {
   // Optional: point the SDK at a proxy / gateway that speaks the Claude API.
   anthropicBaseUrl: (env.ANTHROPIC_BASE_URL || '').replace(/\/$/, ''),
   anthropicModel: env.ANTHROPIC_MODEL || 'claude-sonnet-5-5',
-  // Utility calls (fact extraction, persona detection, image-prompt translation)
+  // Utility calls (fact extraction, image-prompt translation)
   // don't need the big model. Haiku is ~20x cheaper and fast enough.
   anthropicUtilityModel: env.ANTHROPIC_UTILITY_MODEL || 'claude-haiku-5-5',
   anthropicMaxTokens: Math.max(
